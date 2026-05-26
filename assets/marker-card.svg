@@ -1,32 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1250" height="1250" viewBox="0 0 1250 1250">
-  <rect width="1250" height="1250" fill="#020202"/>
-  <rect x="18" y="18" width="1214" height="1214" fill="none" stroke="#ffffff" stroke-width="10"/>
-  <rect x="316" y="388" width="618" height="386" fill="#ffffff"/>
-  <rect x="342" y="414" width="566" height="334" fill="none" stroke="#020202" stroke-width="5"/>
-  <text x="625" y="630" text-anchor="middle"
-    font-family="Arial, PingFang SC, Microsoft YaHei, Heiti SC, sans-serif"
-    font-size="168" font-weight="900" letter-spacing="-2" fill="#020202">合成器</text>
-  <g fill="#ffffff" opacity="0.92">
-    <rect x="140" y="154" width="208" height="18"/>
-    <rect x="902" y="154" width="208" height="18"/>
-    <rect x="140" y="1078" width="208" height="18"/>
-    <rect x="902" y="1078" width="208" height="18"/>
-  </g>
-  <g stroke="#ffffff" stroke-width="12" stroke-linecap="round" opacity="0.84">
-    <path d="M180 918 C245 870 305 970 370 918 S492 866 560 918"/>
-    <path d="M690 904 H770 M806 904 H886 M922 904 H1012"/>
-    <path d="M690 966 H1010"/>
-    <path d="M700 1034 C760 984 820 1084 884 1034 S970 990 1032 1034"/>
-  </g>
-  <g fill="#ffffff">
-    <circle cx="210" cy="252" r="20"/>
-    <circle cx="1038" cy="252" r="20"/>
-    <circle cx="210" cy="998" r="20"/>
-    <circle cx="1038" cy="998" r="20"/>
-    <rect x="462" y="880" width="38" height="120" rx="8"/>
-    <rect x="526" y="836" width="38" height="164" rx="8"/>
-    <rect x="590" y="902" width="38" height="98" rx="8"/>
-    <rect x="654" y="804" width="38" height="196" rx="8"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#ffffff"/>
+  <rect x="51" y="51" width="410" height="410" fill="#000000"/>
+  <rect x="153" y="153" width="205" height="205" fill="#ffffff"/>
+  <text x="256" y="294" text-anchor="middle"
+    font-family="Songti SC, STSong, SimSun, serif"
+    font-size="104" font-weight="700" letter-spacing="-10" fill="#000000">合成器</text>
 </svg>

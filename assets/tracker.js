@@ -86,6 +86,8 @@ function detectHiroTextMarkerPose(cardTarget, frame) {
       dataConfidence,
       usesWholeCardTarget: true,
       source: "hiro-text-marker",
+      recognizedText: cardTarget?.recognizedText || cardTarget?.markerText?.[0] || "",
+      resolvedInstrument: cardTarget?.resolvedInstrument || cardTarget?.instrumentId || "synthesizer",
       decodedPayload: cardTarget?.encodedPayload || ""
     };
     if (!isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget)) continue;

@@ -1,5 +1,5 @@
 import * as THREE from "./three.js";
-import { getCardTarget } from "./cards.js";
+import { getCardTarget, markerResourceMap } from "./cards.js";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
 import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js";
@@ -31,7 +31,7 @@ const FADERS = [
 const PERFORMANCE_BUTTONS = ["GLIDE", "ARP", "HOLD"];
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const WHITE_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);
-const REQUIRED_CARD_ID = "card-synth-v1";
+const REQUIRED_CARD_ID = "hechengqi";
 const MARKER_SCAN_INTERVAL = 0;
 const REQUIRED_IMAGE_TRACK_CORNERS = 4;
 const MIN_IMAGE_TRACK_CORNER_RATIO = 0.18;
@@ -80,6 +80,10 @@ const GUITE222_GUITAR_PARAMS = {
 const GUITE222_BASE_FREQ = 82.41;
 const GUITE222_BASE_MIDI = 48;
 
+const synthMarkerBinding = markerResourceMap.hechengqi;
+window.markerResourceMap = markerResourceMap;
+window.activeInstrument = null;
+
 const state = {
   currentMode: "synth",
   currentPreset: "SYNTH",
@@ -96,7 +100,8 @@ const state = {
   marker: {
     locked: false,
     payload: "",
-    cardId: "card-synth-v1",
+    cardId: REQUIRED_CARD_ID,
+    instrumentType: null,
     lastSeenAt: 0,
     centerX: 0.5,
     centerY: 0.52,
@@ -456,6 +461,54 @@ function createSynthVoice(midi, velocity = 0.78, options = {}) {
   };
   state.lastFreq = freq;
   return voice;
+}
+
+function noteNameToMidi(note = "C4") {
+  if (typeof note === "number" && Number.isFinite(note)) return note;
+  const match = String(note).trim().match(/^([A-Ga-g])([#b]?)(-?\d+)$/);
+  if (!match) return 60;
+  const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[match[1].toUpperCase()];
+  const accidental = match[2] === "#" ? 1 : match[2] === "b" ? -1 : 0;
+  const octave = Number(match[3]);
+  return (octave + 1) * 12 + base + accidental;
+}
+
+async function initSynthesizer() {
+  unlockAudio();
+  selectPreset("SYNTH");
+  updateDisplay("SYNTH", state.currentWave, "MARKER READY");
+  return true;
+}
+
+async function playSynthesizerNote(options = {}) {
+  if (!window.activeInstrument) return null;
+  unlockAudio();
+  const midi = noteNameToMidi(options.note || "C4");
+  const velocity = clamp(Number(options.velocity ?? 0.8), 0.05, 1);
+  const duration = clamp(Number(options.duration ?? 0.6), 0.08, 4);
+  const voice = createSynthVoice(midi, velocity);
+  if (voice) window.setTimeout(() => releaseVoice(voice), duration * 1000);
+  return voice;
+}
+
+function activateSynthesizerMarker(details = {}) {
+  const config = details.markerResource || synthMarkerBinding;
+  if (window.activeInstrument?.cardId !== config.cardId) {
+    window.activeInstrument = {
+      ...config,
+      initAudioEngine: initSynthesizer,
+      play: playSynthesizerNote
+    };
+    document.body.classList.add("synthesizer-active");
+  }
+  initSynthesizer();
+}
+
+function deactivateSynthesizerMarker() {
+  if (window.activeInstrument?.cardId === synthMarkerBinding.cardId) {
+    window.activeInstrument = null;
+  }
+  document.body.classList.remove("synthesizer-active");
 }
 
 function releaseVoice(voice, options = {}) {
@@ -1683,6 +1736,9 @@ function scanTextCardMarker() {
   const tracked = Boolean(pose && updateMarkerFromPose(pose, scale, {
     payload: pose.decodedPayload || cardTarget.encodedPayload || "instrument=synth",
     cardId: REQUIRED_CARD_ID,
+    instrumentType: pose.resolvedInstrument || cardTarget.resolvedInstrument || cardTarget.markerResource?.instrumentType || cardTarget.instrumentId || "synthesizer",
+    recognizedText: pose.recognizedText || cardTarget.recognizedText || "合成器",
+    markerResource: cardTarget.markerResource || synthMarkerBinding,
     source: pose.source || "text-card",
     immediate: true
   }));
@@ -1855,6 +1911,8 @@ function updateMarkerFromPose(pose, scanScale, details) {
     locked: true,
     payload: details.payload,
     cardId: details.cardId,
+    instrumentType: details.instrumentType || "synthesizer",
+    recognizedText: details.recognizedText || "",
     lastSeenAt: now,
     centerX: center.x,
     centerY: center.y,
@@ -1866,6 +1924,7 @@ function updateMarkerFromPose(pose, scanScale, details) {
   lastCardPoseScan = pose;
   synthGroup.visible = true;
   setSynthActive(true);
+  activateSynthesizerMarker(details);
   restoreOutputForMarkerFound();
   setPrompt("AR Mini Synth Workstation");
   return true;
@@ -1896,6 +1955,7 @@ function hideMarker(promptText) {
   lastCardPoseScan = null;
   cancelActiveControlPointers();
   muteOutputForMarkerLoss();
+  deactivateSynthesizerMarker();
   if (synthGroup) synthGroup.visible = false;
   setSynthActive(false);
   if (promptText) setPrompt(promptText);
