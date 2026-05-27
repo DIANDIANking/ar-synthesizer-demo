@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>AR Mini Synth Workstation</title>
-  <link rel="stylesheet" href="./assets/style.css?v=20260527-patt-marker-v3">
+  <link rel="stylesheet" href="./assets/style.css?v=20260527-nested-marker-v2">
   <script>
     (() => {
       const local = ["localhost", "127.0.0.1"].includes(location.hostname);
@@ -24,7 +24,7 @@
   <section class="welcome-screen" id="welcome-screen" aria-label="平台欢迎页">
     <div class="welcome-content">
       <h1>欢迎来到乐器增强现实（AR）视听云平台</h1>
-      <p>先用微信扫描平台入口码进入演示页；进入后打开相机，对准合成器乐器卡，AR 合成器只在乐器卡被识别时显示。</p>
+      <p>先用微信扫描整张入口二维码进入演示页；进入后打开相机，对准卡片中间的“合成器” marker，AR 合成器只在 marker 被识别时显示。</p>
       <button class="welcome-start" id="start-ar" type="button">启动 AR 体验</button>
     </div>
   </section>
@@ -43,6 +43,6 @@
     </section>
   </main>
 
-  <script type="module" src="./assets/app.js?v=20260527-patt-marker-v3"></script>
+  <script type="module" src="./assets/app.js?v=20260527-nested-marker-v2"></script>
 </body>
 </html>

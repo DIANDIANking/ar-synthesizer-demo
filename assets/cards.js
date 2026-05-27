@@ -2,8 +2,8 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-hechengqi.patt?v=20260527-patt-marker-v3",
-    markerImageUrl: "./assets/marker-card.png",
+    markerUrl: "./assets/markers/pattern-synth.patt?v=20260527-nested-marker-v2",
+    markerImageUrl: "./assets/synth-nested-card.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",
     initAudioEngineName: "initSynthesizer",
@@ -80,7 +80,7 @@ export const CARD_TARGETS = {
     recognizedText: "合成器",
     resolvedInstrument: instrumentTextMap["合成器"],
     encodedPayload: "instrument=synthesizer;card=card-synth-v1;markerText=合成器",
-    image: "./assets/marker-card.png",
+    image: "./assets/synth-nested-card.png",
     cardAspect: 1,
     qrCenterYOffset: 0,
     cornerMarkerRatio: {

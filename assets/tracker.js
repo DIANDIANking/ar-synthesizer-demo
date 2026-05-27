@@ -60,7 +60,7 @@ export function detectCardPoseFromFrame(cardTarget, frame = null, patternTarget 
   if (!frame?.imageData?.data || !frame.width || !frame.height) return null;
   const patternPose = detectPatternCardPose(cardTarget, frame, patternTarget);
   if (patternPose) return patternPose;
-  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame, patternTarget);
+  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame, patternTarget, Boolean(patternTarget));
   if (textPanelPose) return textPanelPose;
   if (cardTarget?.hiroMarker?.requireTextPanelOnly && !patternTarget) return null;
 
@@ -463,8 +463,8 @@ function findBrightPanelCandidates(frame) {
   const candidates = [];
   const stack = [];
   const minSide = Math.min(frame.width, frame.height);
-  const minPanelW = Math.max(34, minSide * 0.095);
-  const minPanelH = Math.max(30, minSide * 0.075);
+  const minPanelW = Math.max(30, minSide * 0.045);
+  const minPanelH = Math.max(26, minSide * 0.040);
   const maxPanelW = frame.width * 0.78;
   const maxPanelH = frame.height * 0.62;
 
@@ -557,7 +557,7 @@ function findDarkFrameCandidates(frame) {
   const candidates = [];
   const stack = [];
   const minSide = Math.min(frame.width, frame.height);
-  const minFrameW = Math.max(90, minSide * 0.20);
+  const minFrameW = Math.max(70, minSide * 0.08);
   const maxFrameW = frame.width * 0.94;
   const maxFrameH = frame.height * 0.94;
 
