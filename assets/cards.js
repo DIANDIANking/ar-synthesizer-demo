@@ -56,7 +56,7 @@ export const CARD_TARGETS = {
       decodedInstrument: "synthesizer"
     },
     recognition: {
-      minPatternConfidence: 0.32,
+      minPatternConfidence: 0.30,
       minTextConfidence: 0.08,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.20,
@@ -107,7 +107,7 @@ export const CARD_TARGETS = {
       decodedInstrument: "synth"
     },
     recognition: {
-      minPatternConfidence: 0.32,
+      minPatternConfidence: 0.30,
       minTextConfidence: 0.10,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.24,
