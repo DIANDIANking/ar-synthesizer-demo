@@ -40,14 +40,12 @@ const REQUIRED_FOUND_FRAMES = 1;
 const MARKER_CANDIDATE_RESET_MS = 420;
 const MIN_SYNTH_NOTE_HOLD_MS = 230;
 const MIN_BASS_NOTE_HOLD_MS = 280;
-const FIXED_SYNTH_SCALE = 1.0;
+const MARKER_CHILD_SYNTH_SCALE = 1.6;
 const MARKER_REFERENCE_SIZE = 0.36;
 const MARKER_REFERENCE_DISTANCE = 6.1;
-const MARKER_MIN_DISTANCE = 2.35;
-const MARKER_MAX_DISTANCE = 12.5;
 const USER_SCALE_LIMITS = {
-  min: 0.55,
-  max: 1.85
+  min: 0.5,
+  max: 4.0
 };
 const ORIGINAL_GUITAR_PARAMS = {
   style: "folk",
@@ -1780,6 +1778,7 @@ function dist(a, b) {
 function updateMarkerFromImageTracker(scanScale, frame) {
   if (!lastCardPoseScan || !state.marker.cardId) return false;
   const cardTarget = getCardTarget(state.marker.cardId);
+  if (cardTarget?.hiroMarker?.requireTextPanelOnly) return false;
   const pose = trackCardPoseFromFrame(lastCardPoseScan, cardTarget, frame);
   if (!isReliableImageTrackedPose(pose, cardTarget, frame)) return false;
   return pose;
@@ -1978,7 +1977,7 @@ function markerTargetForView() {
     x: position.x,
     y: position.y,
     z,
-    scale: FIXED_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1),
+    scale: MARKER_CHILD_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1),
     angle: state.marker.angle,
     tiltX: state.marker.tiltX,
     tiltY: state.marker.tiltY
@@ -1988,11 +1987,7 @@ function markerTargetForView() {
 function markerZFromCardSize(defaultZ = 0.10) {
   if (!camera) return defaultZ;
   const size = Math.max(0.001, state.marker.size || MARKER_REFERENCE_SIZE);
-  const distance = clamp(
-    MARKER_REFERENCE_DISTANCE * (MARKER_REFERENCE_SIZE / size),
-    MARKER_MIN_DISTANCE,
-    MARKER_MAX_DISTANCE
-  );
+  const distance = MARKER_REFERENCE_DISTANCE * (MARKER_REFERENCE_SIZE / size);
   return camera.position.z - distance;
 }
 
