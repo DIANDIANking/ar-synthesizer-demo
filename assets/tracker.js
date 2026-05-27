@@ -56,9 +56,19 @@ function logTracker(phase, details = {}, force = false) {
   if (details.found === true) {
     window.__AR_FOUND__ = true;
     window.__AR_LAST_FOUND_AT__ = performance.now();
-    window.__AR_TRACKER_RESULT__ = details;
+
+    if (window.state?.marker) {
+      window.state.marker.locked = true;
+      window.state.marker.lastSeenAt = performance.now();
+      window.state.marker.score = details.score ?? details.bestScore ?? 1;
+    }
+
   } else if (details.found === false) {
     window.__AR_FOUND__ = false;
+
+    if (window.state?.marker) {
+      window.state.marker.locked = false;
+    }
   }
 }
 function resetFramePatternStats() {
