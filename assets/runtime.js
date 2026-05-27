@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getCardTarget, markerResourceMap } from "./cards.js?v=20260527-nested-marker-v3";
+import { getCardTarget, markerResourceMap } from "./cards.js?v=20260527-pattern-panel-v1";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260527-nested-marker-v3";
+import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260527-pattern-panel-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -79,7 +79,9 @@ const GUITE222_BASE_FREQ = 82.41;
 const GUITE222_BASE_MIDI = 48;
 
 const synthMarkerBinding = markerResourceMap.hechengqi;
+const DEBUG_MARKER_BOX = new URLSearchParams(location.search).has("debugBox");
 window.markerResourceMap = markerResourceMap;
+window.DEBUG_MARKER_BOX = DEBUG_MARKER_BOX;
 window.activeInstrument = null;
 
 const state = {
@@ -1118,10 +1120,11 @@ function createScene() {
   scene.add(rim);
 
   synthGroup = new THREE.Group();
-  synthGroup.name = "AR_Mini_Synth_Workstation";
+  synthGroup.name = DEBUG_MARKER_BOX ? "Debug_Marker_Box" : "AR_Mini_Synth_Workstation";
   synthGroup.visible = false;
   scene.add(synthGroup);
-  buildSynthModel();
+  if (DEBUG_MARKER_BOX) buildDebugMarkerBox();
+  else buildSynthModel();
   resizeCanvas();
   bindCanvasEvents(canvas);
   requestAnimationFrame(render);
@@ -1131,6 +1134,17 @@ function addInteractive(mesh, interaction) {
   mesh.userData.interaction = interaction;
   interactives.push(mesh);
   return mesh;
+}
+
+function buildDebugMarkerBox() {
+  interactives = [];
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.5, 0.5),
+    makeMaterial({ color: 0xff0000, roughness: 0.5, metalness: 0.1 })
+  );
+  box.position.set(0, 0.5, 0);
+  box.name = "debug_marker_box";
+  synthGroup.add(box);
 }
 
 function buildSynthModel() {
@@ -1819,7 +1833,7 @@ function updateMarkerFromImageTracker(scanScale, frame) {
 function isReliableImageTrackedPose(pose, cardTarget, frame, patternTarget = null) {
   if (!pose) return false;
   if (patternTarget) {
-    const minPattern = cardTarget?.recognition?.minPatternConfidence ?? patternTarget.minConfidence ?? 0.58;
+    const minPattern = cardTarget?.recognition?.minPatternConfidence ?? patternTarget.minConfidence ?? 0.35;
     if ((pose.patternConfidence ?? 0) >= minPattern * 0.84) return true;
   }
   const strongCorners = (pose.markerRatios || [])
@@ -1832,12 +1846,12 @@ function isReliableImageTrackedPose(pose, cardTarget, frame, patternTarget = nul
   pose.decodedPayload = cardTarget?.encodedPayload || "";
   const policy = cardTarget?.recognition || {};
   const markerConfidence = pose.wholeCardConfidence ?? 0;
-  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.42;
-  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.48;
-  const combinedMin = policy.minCombinedConfidence ?? 0.54;
+  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.30;
+  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.30;
+  const combinedMin = policy.minCombinedConfidence ?? 0.35;
   const hasEnoughCorners = pose.visibleMarkers >= REQUIRED_IMAGE_TRACK_CORNERS
     && strongCorners >= Math.max(3, REQUIRED_IMAGE_TRACK_CORNERS - 1)
-    && markerConfidence >= Math.min(MIN_IMAGE_TRACK_CONFIDENCE, policy.minCornerConfidence ?? 0.44);
+    && markerConfidence >= Math.min(MIN_IMAGE_TRACK_CONFIDENCE, policy.minCornerConfidence ?? 0.30);
   const combined = markerConfidence * 0.48 + textConfidence * 0.34 + dataConfidence * 0.18;
   return hasEnoughCorners
     && (textConfidence >= textMin || dataConfidence >= dataMin || textConfidence >= textMin * 0.72)
@@ -1965,6 +1979,8 @@ function updateMarkerFromPose(pose, scanScale, details) {
     tiltY: clamp((bottomW - topW) / Math.max(topW + bottomW, 1), -0.38, 0.38)
   };
   lastCardPoseScan = pose;
+  window.__AR_FOUND__ = true;
+  window.__AR_LAST_FOUND_AT__ = performance.now();
   synthGroup.visible = true;
   setSynthActive(true);
   activateSynthesizerMarker(details);
@@ -1974,7 +1990,19 @@ function updateMarkerFromPose(pose, scanScale, details) {
 }
 
 function isMarkerVisible() {
-  return state.marker.locked;
+
+  const now =
+    typeof performance !== "undefined"
+      ? performance.now()
+      : Date.now();
+
+  const lastFound =
+    window.__AR_LAST_FOUND_AT__ || 0;
+
+  return (
+    window.__AR_FOUND__ === true &&
+    now - lastFound < 1000
+  );
 }
 
 function updateMarkerLost() {
@@ -1999,6 +2027,7 @@ function hideMarker(promptText) {
   cancelActiveControlPointers();
   muteOutputForMarkerLoss();
   deactivateSynthesizerMarker();
+  window.__AR_FOUND__ = false;
   if (synthGroup) synthGroup.visible = false;
   setSynthActive(false);
   if (promptText) setPrompt(promptText);
@@ -2058,25 +2087,30 @@ function updateAnchor(portrait) {
 }
 
 function render(time = 0) {
-  enforceMarkerTimeout(time || performance.now());
+  enforceMarkerTimeout(time);
+
   const stage = $("#ar-stage");
   const rect = stage?.getBoundingClientRect();
   const portrait = (rect?.height || window.innerHeight) >= (rect?.width || window.innerWidth);
+
   updateAnchor(portrait);
 
   if (synthGroup) {
     const visible = isMarkerVisible();
     synthGroup.visible = visible;
-    if (!visible) {
-      renderer.render(scene, camera);
-      requestAnimationFrame(render);
-      return;
+
+    if (visible) {
+      const worldX = Number.isFinite(anchor.x) ? anchor.x / 600 : 0;
+      const worldY = Number.isFinite(anchor.y) ? -anchor.y / 600 : 0;
+      const worldZ = -2;
+
+      synthGroup.position.set(worldX, worldY, worldZ);
+      synthGroup.scale.setScalar(1.2);
+
+      synthGroup.rotation.x = -0.35 + (Number.isFinite(anchor.tiltY) ? anchor.tiltY : 0) * 0.42;
+      synthGroup.rotation.y = (Number.isFinite(anchor.tiltX) ? anchor.tiltX : 0) * 0.42;
+      synthGroup.rotation.z = Number.isFinite(anchor.angle) ? anchor.angle : 0;
     }
-    synthGroup.position.set(anchor.x, anchor.y, anchor.z);
-    synthGroup.scale.setScalar(anchor.scale);
-    synthGroup.rotation.x = -0.35 + anchor.tiltY * 0.42;
-    synthGroup.rotation.y = anchor.tiltX * 0.42;
-    synthGroup.rotation.z = anchor.angle;
   }
 
   renderer.render(scene, camera);

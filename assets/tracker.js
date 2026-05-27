@@ -1,3 +1,242 @@
+  const MATCH_THRESHOLD = 0.35;
+let lastTrackerLogAt = 0;
+let frameBestPatternScore = 0;
+let debugCropCanvas = null;
+const TRACKER_LOG_INTERVAL_MS = 700;
+
+function logTracker(phase, details = {}, force = false) {
+
+  const now =
+    typeof performance !== "undefined"
+      ? performance.now()
+      : Date.now();
+
+  const important =
+    details.found === true ||
+    details.found === false;
+
+  if (
+    !force &&
+    !important &&
+    now - lastTrackerLogAt < TRACKER_LOG_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastTrackerLogAt = now;
+
+  const bestScore =
+    details.bestScore ??
+    details.score ??
+    details.patternConfidence;
+
+  // =========================
+  // 基础日志
+  // =========================
+
+  if (bestScore != null) {
+    console.log("[tracker] bestScore:", bestScore);
+  }
+
+  console.log(
+    "[tracker] threshold:",
+    details.threshold ?? MATCH_THRESHOLD
+  );
+
+  if ("found" in details) {
+    console.log("[tracker] found:", details.found);
+  }
+
+  console.log(`[tracker] ${phase}:`, details);
+
+  // =========================
+  // tracker -> runtime bridge
+  // =========================
+
+  if (details.found === true) {
+
+    window.__AR_FOUND__ = true;
+
+    window.__AR_TRACKER_RESULT__ = details;
+
+    window.__AR_LAST_FOUND_AT__ =
+      typeof performance !== "undefined"
+        ? performance.now()
+        : Date.now();
+
+    console.log(
+      "[tracker] window.__AR_FOUND__ = true"
+    );
+
+  } else if (details.found === false) {
+
+    window.__AR_FOUND__ = false;
+
+    console.log(
+      "[tracker] window.__AR_FOUND__ = false"
+    );
+  }
+}
+function resetFramePatternStats() {
+  frameBestPatternScore = 0;
+}
+
+function getPatternSampleRegion(cardTarget) {
+  const panel = cardTarget?.patternPanel;
+  if (panel?.w && panel?.h) return panel;
+  return { x: 0, y: 0, w: 1, h: 1 };
+}
+
+function mapCardRegionPoint(pose, nx, ny) {
+  return add(
+    add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
+    mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
+  );
+}
+
+function getDebugCropCanvas() {
+  if (!debugCropCanvas && typeof document !== "undefined") {
+    debugCropCanvas = document.createElement("canvas");
+  }
+  return debugCropCanvas;
+}
+
+function extractPatternCropDataUrl(pose, frame, region) {
+
+  console.log("[tracker] extractPatternCropDataUrl entered");
+
+  if (!pose || !frame?.imageData?.data || typeof document === "undefined") {
+    return null;
+  }
+
+  const corners = [
+    mapCardRegionPoint(pose, region.x, region.y),
+    mapCardRegionPoint(pose, region.x + region.w, region.y),
+    mapCardRegionPoint(pose, region.x + region.w, region.y + region.h),
+    mapCardRegionPoint(pose, region.x, region.y + region.h)
+  ];
+
+  const xs = corners.map((p) => p.x);
+  const ys = corners.map((p) => p.y);
+
+  const minX = clamp(Math.floor(Math.min(...xs)), 0, frame.width - 1);
+  const maxX = clamp(Math.ceil(Math.max(...xs)), minX + 1, frame.width);
+
+  const minY = clamp(Math.floor(Math.min(...ys)), 0, frame.height - 1);
+  const maxY = clamp(Math.ceil(Math.max(...ys)), minY + 1, frame.height);
+
+  const cropW = maxX - minX;
+  const cropH = maxY - minY;
+
+  if (cropW < 2 || cropH < 2) {
+    return null;
+  }
+
+  const canvas = getDebugCropCanvas();
+
+  const outSize = 128;
+
+  canvas.width = outSize;
+  canvas.height = outSize;
+
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) {
+    return null;
+  }
+
+  const temp = document.createElement("canvas");
+
+  temp.width = frame.width;
+  temp.height = frame.height;
+
+  temp.getContext("2d")?.putImageData(frame.imageData, 0, 0);
+
+  // =========================
+  // 只裁中心 marker 区域
+  // =========================
+
+  const markerScale = 0.42;
+
+  const cropSize = Math.min(temp.width, temp.height) * markerScale;
+
+  const cropX = (temp.width - cropSize) * 0.5;
+  const cropY = (temp.height - cropSize) * 0.5;
+
+  ctx.drawImage(
+    temp,
+    cropX,
+    cropY,
+    cropSize,
+    cropSize,
+    0,
+    0,
+    outSize,
+    outSize
+  );
+
+  // =========================
+  // 页面右上角显示 debug crop
+  // =========================
+
+  let debugImg = document.getElementById("debug-crop");
+
+  if (!debugImg) {
+
+    debugImg = document.createElement("img");
+
+    debugImg.id = "debug-crop";
+
+    debugImg.style.position = "fixed";
+    debugImg.style.top = "10px";
+    debugImg.style.right = "10px";
+    debugImg.style.width = "128px";
+    debugImg.style.height = "128px";
+    debugImg.style.zIndex = "999999";
+    debugImg.style.border = "2px solid red";
+    debugImg.style.background = "white";
+
+    document.body.appendChild(debugImg);
+  }
+
+  const debugUrl = canvas.toDataURL("image/png");
+
+  debugImg.src = debugUrl;
+
+  console.log("[tracker crop]", debugUrl);
+
+  return debugUrl;
+}
+
+function publishPatternDebug(pose, frame, cardTarget, region, bestScore, found = null) {
+  frameBestPatternScore = Math.max(frameBestPatternScore, bestScore);
+  const patternThreshold = cardTarget
+    ? getMinPatternConfidence(cardTarget, { minConfidence: MATCH_THRESHOLD })
+    : MATCH_THRESHOLD;
+  const cropDataUrl = extractPatternCropDataUrl(pose, frame, region);
+  const payload = {
+    bestScore,
+    threshold: MATCH_THRESHOLD,
+    patternThreshold,
+    found: found ?? bestScore >= patternThreshold,
+    patternPanel: region,
+    cropDataUrl,
+    at: Date.now()
+  };
+  if (typeof window !== "undefined") {
+    window.__trackerDebug = payload;
+  }
+  logTracker("pattern:sample", {
+    bestScore,
+    score: bestScore,
+    threshold: MATCH_THRESHOLD,
+    patternThreshold,
+    found: payload.found,
+    patternPanel: region,
+    hasCrop: Boolean(cropDataUrl)
+  });
+}
+
 export function parseArPatternFile(patternText) {
   const sections = String(patternText || "")
     .trim()
@@ -25,13 +264,19 @@ export function parseArPatternFile(patternText) {
       return values.length === size * size ? { size, values } : null;
     })
     .filter(Boolean);
-  return orientations.length ? { orientations, size: orientations[0].size, minConfidence: 0.58 } : null;
+  return orientations.length ? { orientations, size: orientations[0].size, minConfidence: MATCH_THRESHOLD } : null;
 }
 
 export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null, patternTarget = null) {
-  if (!previousPose?.location || !frame?.imageData?.data) return null;
+  if (!previousPose?.location || !frame?.imageData?.data) {
+    logTracker("track:skip", { found: false, reason: "no-previous-pose-or-frame" });
+    return null;
+  }
   const base = geometryFromLocation(previousPose.location, cardTarget);
-  if (!base) return null;
+  if (!base) {
+    logTracker("track:skip", { found: false, reason: "no-geometry" });
+    return null;
+  }
   const markerRatio = cardTarget?.cornerMarkerRatio || { x: 0.84, y: 0.855 };
   const markerRadius = Math.max(5, base.halfW * 0.075);
   const searchRadius = Math.max(12, markerRadius * 2.65);
@@ -40,13 +285,33 @@ export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null, p
     return hit ? { ...hit, index } : null;
   });
   const refined = refinePoseFromMarkers(base, markers, markerRatio, frame, cardTarget, "image-marker");
-  if (!refined) return null;
-  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget);
-  if (patternTarget && patternConfidence < getMinPatternConfidence(cardTarget, patternTarget) * 0.84) return null;
+  if (!refined) {
+    logTracker("track:skip", { found: false, reason: "refine-failed" });
+    return null;
+  }
+  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget, cardTarget);
+  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget) * 0.84;
+  if (patternTarget && patternConfidence < patternThreshold) {
+    logTracker("track:reject", {
+      found: false,
+      reason: "pattern-below-threshold",
+      score: patternConfidence,
+      threshold: patternThreshold,
+      source: "image-marker"
+    });
+    return null;
+  }
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
   refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
+  logTracker("track:found", {
+    found: true,
+    score: patternConfidence,
+    textConfidence,
+    dataConfidence,
+    source: "image-marker"
+  }, true);
   return {
     ...refined,
     patternConfidence,
@@ -57,29 +322,92 @@ export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null, p
 }
 
 export function detectCardPoseFromFrame(cardTarget, frame = null, patternTarget = null) {
-  if (!frame?.imageData?.data || !frame.width || !frame.height) return null;
+  resetFramePatternStats();
+  if (!frame?.imageData?.data || !frame.width || !frame.height) {
+    logTracker("detect:skip", { found: false, reason: "no-frame" });
+    return null;
+  }
+  logTracker("detect:enter", {
+    frame: `${frame.width}x${frame.height}`,
+    hasPattern: Boolean(patternTarget?.orientations?.length)
+  });
   const patternPose = detectPatternCardPose(cardTarget, frame, patternTarget);
-  if (patternPose) return patternPose;
-  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame, Boolean(patternTarget) ? patternTarget : null, Boolean(patternTarget));
-  if (textPanelPose) return textPanelPose;
-  if (cardTarget?.hiroMarker?.requireTextPanelOnly && !patternTarget) return null;
+  if (patternPose) {
+    logTracker("detect:found", {
+      found: true,
+      bestScore: patternPose.patternConfidence,
+      score: patternPose.patternConfidence,
+      source: patternPose.source
+    }, true);
+    return patternPose;
+  }
+  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame, patternTarget, false);
+  if (textPanelPose) {
+    logTracker("detect:found", {
+      found: true,
+      bestScore: textPanelPose.patternConfidence,
+      score: textPanelPose.patternConfidence,
+      source: textPanelPose.source
+    }, true);
+    return textPanelPose;
+  }
+  if (!textPanelPose) {
+    logTracker("detect:miss", {
+      found: false,
+      reason: "no-pattern-or-text-panel-match",
+      bestScore: frameBestPatternScore,
+      threshold: MATCH_THRESHOLD
+    });
+  }
+  if (cardTarget?.hiroMarker?.requireTextPanelOnly && !patternTarget) {
+    logTracker("detect:skip", { found: false, reason: "text-panel-only-without-pattern" });
+    return null;
+  }
 
   const candidates = findDarkSquareCandidates(frame);
-  if (candidates.length < 4) return null;
+  if (candidates.length < 4) {
+    logTracker("detect:skip", { found: false, reason: "not-enough-corners", candidates: candidates.length });
+    return null;
+  }
 
   const corners = chooseBestCardCorners(candidates, cardTarget, frame) || chooseExtremeCorners(candidates);
-  if (!corners) return null;
+  if (!corners) {
+    logTracker("detect:skip", { found: false, reason: "no-corners" });
+    return null;
+  }
 
   const markerRatio = cardTarget?.cornerMarkerRatio || { x: 0.84, y: 0.855 };
   const base = geometryFromMarkerCenters(corners, markerRatio, cardTarget);
-  if (!base) return null;
+  if (!base) {
+    logTracker("detect:skip", { found: false, reason: "geometry-failed" });
+    return null;
+  }
   const refined = refinePoseFromMarkers(base, corners, markerRatio, frame, cardTarget, "text-card");
-  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget);
-  if (patternTarget && patternConfidence < getMinPatternConfidence(cardTarget, patternTarget)) return null;
+  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget, cardTarget);
+  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget);
+  if (patternTarget && patternConfidence < patternThreshold) {
+    logTracker("detect:text-card:reject", {
+      found: false,
+      reason: "pattern-below-threshold",
+      bestScore: patternConfidence,
+      score: patternConfidence,
+      threshold: patternThreshold,
+      frameBestScore: frameBestPatternScore,
+      source: "text-card"
+    });
+    return null;
+  }
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
   refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
+  logTracker("detect:found", {
+    found: true,
+    score: patternConfidence,
+    textConfidence,
+    dataConfidence,
+    source: "text-card"
+  }, true);
   return {
     ...refined,
     patternConfidence,
@@ -90,7 +418,10 @@ export function detectCardPoseFromFrame(cardTarget, frame = null, patternTarget 
 }
 
 function detectPatternCardPose(cardTarget, frame, patternTarget) {
-  if (!patternTarget?.orientations?.length) return null;
+  if (!patternTarget?.orientations?.length) {
+    logTracker("pattern:skip", { found: false, reason: "no-pattern-target" });
+    return null;
+  }
   return detectHiroFrameMarkerPose(cardTarget, frame, patternTarget)
     || detectHiroTextMarkerPose(cardTarget, frame, patternTarget, true);
 }
@@ -98,6 +429,8 @@ function detectPatternCardPose(cardTarget, frame, patternTarget) {
 function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
   const candidates = findDarkFrameCandidates(frame);
   let best = null;
+  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
+  logTracker("patt-frame:enter", { candidates: candidates.length, threshold: patternThreshold });
   for (const candidate of candidates) {
     const base = makeGeometry(
       point(candidate.x, candidate.y),
@@ -107,8 +440,16 @@ function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
       candidate.height * 0.5,
       cardTarget
     );
-    const patternConfidence = samplePatternConfidence(base, frame, patternTarget);
-    if (patternConfidence < getMinPatternConfidence(cardTarget, patternTarget) * 0.72) continue;
+    const patternConfidence = samplePatternConfidence(base, frame, patternTarget, cardTarget);
+    if (patternConfidence < patternThreshold) {
+      logTracker("patt-frame:candidate", {
+        found: false,
+        score: patternConfidence,
+        threshold: patternThreshold,
+        reason: "pattern-below-threshold"
+      });
+      continue;
+    }
     const textConfidence = sampleTextSignature(base, cardTarget, frame);
     const centerWhiteRatio = sampleCardRegionBrightRatio(base, frame, cardTarget?.textPanel || {
       x: 0.30,
@@ -133,16 +474,29 @@ function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
     if (!isRecognizedSynthCard(pose, textConfidence, 1, cardTarget)) continue;
     const areaScore = Math.min(1, candidate.area / (frame.width * frame.height * 0.42));
     const score = patternConfidence * 2.6 + centerWhiteRatio * 1.2 + candidate.fill + areaScore;
-    if (!best || score > best.score) best = { score, pose };
+    if (!best || score > best.score) {
+      logTracker("patt-frame:best", { found: true, score, patternConfidence, source: "patt-frame-marker" });
+      best = { score, pose };
+    }
   }
+  if (!best) logTracker("patt-frame:miss", { found: false, reason: "no-candidate-passed" });
   return best?.pose || null;
 }
 
 function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patternRequired = false) {
   const panel = cardTarget?.textPanel;
-  if (!cardTarget?.hiroMarker?.enabled || !panel?.w || !panel?.h) return null;
+  if (!cardTarget?.hiroMarker?.enabled || !panel?.w || !panel?.h) {
+    logTracker("hiro-text:skip", { found: false, reason: "hiro-disabled-or-no-panel" });
+    return null;
+  }
   const candidates = findBrightPanelCandidates(frame);
   let best = null;
+  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget);
+  logTracker("hiro-text:enter", {
+    candidates: candidates.length,
+    patternRequired,
+    threshold: patternThreshold
+  });
   for (const candidate of candidates) {
     const panelAspect = panel.w / panel.h;
     const aspect = candidate.width / Math.max(candidate.height, 1);
@@ -160,8 +514,16 @@ function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patte
     const panelCenterOffsetY = (panel.y + panel.h * 0.5 - 0.5) * halfH * 2;
     const cardCenter = point(candidate.x - panelCenterOffsetX, candidate.y - panelCenterOffsetY);
     const base = makeGeometry(cardCenter, point(1, 0), point(0, 1), halfW, halfH, cardTarget);
-    const patternConfidence = samplePatternConfidence(base, frame, patternTarget);
-    if (patternRequired && patternConfidence < getMinPatternConfidence(cardTarget, patternTarget)) continue;
+    const patternConfidence = samplePatternConfidence(base, frame, patternTarget, cardTarget);
+    if (patternRequired && patternConfidence < patternThreshold) {
+      logTracker("hiro-text:candidate", {
+        found: false,
+        score: patternConfidence,
+        threshold: patternThreshold,
+        reason: "pattern-below-threshold"
+      });
+      continue;
+    }
     const textConfidence = sampleTextSignature(base, cardTarget, frame);
     const dataConfidence = 1;
     const wholeCardConfidence = clamp(
@@ -193,32 +555,71 @@ function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patte
       + textConfidence * 1.15
       + whiteRatio * 0.45
       - sizePenalty;
-    if (!best || score > best.score) best = { score, pose };
+    if (!best || score > best.score) {
+      logTracker("hiro-text:best", {
+        found: true,
+        score,
+        patternConfidence,
+        source: patternRequired ? "patt-marker" : "hiro-text-marker"
+      });
+      best = { score, pose };
+    }
   }
+  if (!best) logTracker("hiro-text:miss", { found: false, reason: "no-candidate-passed", patternRequired });
   return best?.pose || null;
 }
 
 function isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget) {
-  if (!pose) return false;
+  if (!pose) {
+    logTracker("recognize", { found: false, reason: "no-pose" });
+    return false;
+  }
   const policy = cardTarget?.recognition || {};
   const markerConfidence = pose.wholeCardConfidence ?? Math.min(1, (pose.visibleMarkers || 0) / 4);
   const patternConfidence = pose.patternConfidence ?? 0;
-  const patternMin = policy.minPatternConfidence ?? 0.58;
-  if (patternConfidence >= patternMin) return true;
-  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.42;
-  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.48;
-  const combinedMin = policy.minCombinedConfidence ?? 0.54;
-  const cornerMin = policy.minCornerConfidence ?? 0.44;
+  const patternMin = policy.minPatternConfidence ?? MATCH_THRESHOLD;
+  let found = false;
+  let reason = "";
+  if (patternConfidence >= patternMin) {
+    found = true;
+    reason = "pattern";
+  }
+  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.30;
+  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.30;
+  const combinedMin = policy.minCombinedConfidence ?? 0.35;
+  const cornerMin = policy.minCornerConfidence ?? 0.30;
   const hasText = textConfidence >= textMin;
   const hasData = dataConfidence >= dataMin;
   const combined = markerConfidence * 0.48 + textConfidence * 0.34 + dataConfidence * 0.18;
-  if (markerConfidence >= 0.96 && textConfidence >= textMin * 0.72) return true;
-  if (markerConfidence >= cornerMin && (hasText || hasData) && combined >= combinedMin) return true;
-  return markerConfidence >= 0.72 && textConfidence >= textMin * 0.82 && dataConfidence >= dataMin * 0.72;
+  if (!found && markerConfidence >= 0.96 && textConfidence >= textMin * 0.72) {
+    found = true;
+    reason = "marker+text";
+  }
+  if (!found && markerConfidence >= cornerMin && (hasText || hasData) && combined >= combinedMin) {
+    found = true;
+    reason = "combined";
+  }
+  if (!found && markerConfidence >= 0.72 && textConfidence >= textMin * 0.82 && dataConfidence >= dataMin * 0.72) {
+    found = true;
+    reason = "fallback";
+  }
+  logTracker("recognize", {
+    found,
+    reason: found ? reason : "below-threshold",
+    bestScore: patternConfidence,
+    score: patternConfidence,
+    threshold: patternMin,
+    textConfidence,
+    dataConfidence,
+    markerConfidence,
+    combined,
+    source: pose.source
+  });
+  return found;
 }
 
 function getMinPatternConfidence(cardTarget, patternTarget) {
-  return cardTarget?.recognition?.minPatternConfidence ?? patternTarget?.minConfidence ?? 0.58;
+  return cardTarget?.recognition?.minPatternConfidence ?? patternTarget?.minConfidence ?? MATCH_THRESHOLD;
 }
 
 function point(x = 0, y = 0) {
@@ -895,19 +1296,17 @@ function sampleCardRegionBrightRatio(pose, frame, region) {
   return total ? bright / total : 0;
 }
 
-function samplePatternConfidence(pose, frame, patternTarget) {
+function samplePatternConfidence(pose, frame, patternTarget, cardTarget = null) {
   if (!pose || !frame?.imageData?.data || !patternTarget?.orientations?.length) return 0;
   const size = patternTarget.size || patternTarget.orientations[0]?.size || 16;
+  const region = getPatternSampleRegion(cardTarget);
   const actual = [];
   const data = frame.imageData.data;
   for (let row = 0; row < size; row += 1) {
     for (let col = 0; col < size; col += 1) {
-      const nx = (col + 0.5) / size;
-      const ny = (row + 0.5) / size;
-      const p = add(
-        add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
-        mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
-      );
+      const nx = region.x + ((col + 0.5) / size) * region.w;
+      const ny = region.y + ((row + 0.5) / size) * region.h;
+      const p = mapCardRegionPoint(pose, nx, ny);
       const x = Math.round(p.x);
       const y = Math.round(p.y);
       if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) {
@@ -938,7 +1337,9 @@ function samplePatternConfidence(pose, frame, patternTarget) {
     }
     best = Math.max(best, total ? score / total : 0);
   }
-  return clamp(best, 0, 1);
+  const bestScore = clamp(best, 0, 1);
+  if (bestScore > 0.05) publishPatternDebug(pose, frame, cardTarget, region, bestScore);
+  return bestScore;
 }
 
 function refinePoseFromMarkers(base, markers, markerRatio, frame, cardTarget, source) {
