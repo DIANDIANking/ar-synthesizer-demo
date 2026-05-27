@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getCardTarget, markerResourceMap } from "./cards.js?v=20260527-pattern-panel-v1";
+import { getCardTarget, markerResourceMap } from "./cards.js?v=20260528-pattern-1111-v1";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260527-pattern-panel-v1";
+import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260528-pattern-1111-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -1990,13 +1990,7 @@ function updateMarkerFromPose(pose, scanScale, details) {
 }
 
 function isMarkerVisible() {
-  const now = performance.now();
-  const lastSeenAt = state.marker.lastSeenAt || 0;
-
-  return (
-    state.marker.locked === true &&
-    now - lastSeenAt < 300
-  );
+  return state.marker.locked === true;
 }
 
 function updateMarkerLost() {
@@ -2094,13 +2088,8 @@ function render(time = 0) {
     synthGroup.visible = visible;
 
     if (visible) {
-      const worldX = Number.isFinite(anchor.x) ? anchor.x / 600 : 0;
-      const worldY = Number.isFinite(anchor.y) ? -anchor.y / 600 + 0.35 : 0.35;
-      const worldZ = -2;
-
-      synthGroup.position.set(worldX, worldY, worldZ);
-      synthGroup.scale.setScalar(1.2);
-
+      synthGroup.position.set(anchor.x, anchor.y, anchor.z);
+      synthGroup.scale.setScalar(anchor.scale);
       synthGroup.rotation.x = -0.25 + (Number.isFinite(anchor.tiltY) ? anchor.tiltY : 0) * 0.42;
       synthGroup.rotation.y = (Number.isFinite(anchor.tiltX) ? anchor.tiltX : 0) * 0.42;
       synthGroup.rotation.z = Number.isFinite(anchor.angle) ? anchor.angle : 0;

@@ -2,8 +2,8 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-synth.patt?v=20260527-pattern-panel-v1",
-    markerImageUrl: "./assets/synth-nested-card.png",
+    markerUrl: "./assets/markers/pattern-synth.patt?v=20260528-pattern-1111-v1",
+    markerImageUrl: "./assets/markers/synth-marker.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",
     initAudioEngineName: "initSynthesizer",
@@ -49,6 +49,12 @@ export const CARD_TARGETS = {
       minDarkSurroundRatio: 0.20,
       minTextDarkRatio: 0.045
     },
+    patternPanel: {
+      x: 0.30,
+      y: 0.30,
+      w: 0.40,
+      h: 0.40
+    },
     hiroMarker: {
       enabled: true,
       anchorRegion: "textPanel",
@@ -56,7 +62,7 @@ export const CARD_TARGETS = {
       decodedInstrument: "synthesizer"
     },
     recognition: {
-      minPatternConfidence: 0.30,
+      minPatternConfidence: 0.26,
       minTextConfidence: 0.08,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.20,
@@ -80,7 +86,7 @@ export const CARD_TARGETS = {
     recognizedText: "合成器",
     resolvedInstrument: instrumentTextMap["合成器"],
     encodedPayload: "instrument=synthesizer;card=card-synth-v1;markerText=合成器",
-    image: "./assets/synth-nested-card.png",
+    image: markerResourceMap.hechengqi.markerImageUrl,
     cardAspect: 1,
     qrCenterYOffset: 0,
     cornerMarkerRatio: {
@@ -101,13 +107,19 @@ export const CARD_TARGETS = {
       minDarkSurroundRatio: 0.20,
       minTextDarkRatio: 0.045
     },
+    patternPanel: {
+      x: 0.30,
+      y: 0.30,
+      w: 0.40,
+      h: 0.40
+    },
     hiroMarker: {
       enabled: true,
       anchorRegion: "textPanel",
       decodedInstrument: "synth"
     },
     recognition: {
-      minPatternConfidence: 0.30,
+      minPatternConfidence: 0.26,
       minTextConfidence: 0.10,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.24,

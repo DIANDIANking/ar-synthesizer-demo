@@ -1,10 +1,13 @@
-  const MATCH_THRESHOLD = 0.35;
+const MATCH_THRESHOLD = 0.35;
+const TRACKER_DEBUG = typeof location !== "undefined"
+  && new URLSearchParams(location.search).get("debug") === "tracker";
 let lastTrackerLogAt = 0;
 let frameBestPatternScore = 0;
 let debugCropCanvas = null;
 const TRACKER_LOG_INTERVAL_MS = 700;
 
 function logTracker(phase, details = {}, force = false) {
+  if (!TRACKER_DEBUG) return;
 
   const now =
     typeof performance !== "undefined"
@@ -48,28 +51,6 @@ function logTracker(phase, details = {}, force = false) {
   }
 
   console.log(`[tracker] ${phase}:`, details);
-
-  // =========================
-  // tracker -> runtime bridge
-  // =========================
-
-  if (details.found === true) {
-    window.__AR_FOUND__ = true;
-    window.__AR_LAST_FOUND_AT__ = performance.now();
-
-    if (window.state?.marker) {
-      window.state.marker.locked = true;
-      window.state.marker.lastSeenAt = performance.now();
-      window.state.marker.score = details.score ?? details.bestScore ?? 1;
-    }
-
-  } else if (details.found === false) {
-    window.__AR_FOUND__ = false;
-
-    if (window.state?.marker) {
-      window.state.marker.locked = false;
-    }
-  }
 }
 function resetFramePatternStats() {
   frameBestPatternScore = 0;
@@ -96,9 +77,6 @@ function getDebugCropCanvas() {
 }
 
 function extractPatternCropDataUrl(pose, frame, region) {
-
-  console.log("[tracker] extractPatternCropDataUrl entered");
-
   if (!pose || !frame?.imageData?.data || typeof document === "undefined") {
     return null;
   }
@@ -146,59 +124,19 @@ function extractPatternCropDataUrl(pose, frame, region) {
 
   temp.getContext("2d")?.putImageData(frame.imageData, 0, 0);
 
-  // =========================
-  // 只裁中心 marker 区域
-  // =========================
-
-  const markerScale = 0.42;
-
-  const cropSize = Math.min(temp.width, temp.height) * markerScale;
-
-  const cropX = (temp.width - cropSize) * 0.5;
-  const cropY = (temp.height - cropSize) * 0.5;
-
   ctx.drawImage(
     temp,
-    cropX,
-    cropY,
-    cropSize,
-    cropSize,
+    minX,
+    minY,
+    cropW,
+    cropH,
     0,
     0,
     outSize,
     outSize
   );
 
-  // =========================
-  // 页面右上角显示 debug crop
-  // =========================
-
-  let debugImg = document.getElementById("debug-crop");
-
-  if (!debugImg) {
-
-    debugImg = document.createElement("img");
-
-    debugImg.id = "debug-crop";
-
-    debugImg.style.position = "fixed";
-    debugImg.style.top = "10px";
-    debugImg.style.right = "10px";
-    debugImg.style.width = "128px";
-    debugImg.style.height = "128px";
-    debugImg.style.zIndex = "999999";
-    debugImg.style.border = "2px solid red";
-    debugImg.style.background = "white";
-
-    document.body.appendChild(debugImg);
-  }
-
   const debugUrl = canvas.toDataURL("image/png");
-
-  debugImg.src = debugUrl;
-
-  console.log("[tracker crop]", debugUrl);
-
   return debugUrl;
 }
 
@@ -207,7 +145,7 @@ function publishPatternDebug(pose, frame, cardTarget, region, bestScore, found =
   const patternThreshold = cardTarget
     ? getMinPatternConfidence(cardTarget, { minConfidence: MATCH_THRESHOLD })
     : MATCH_THRESHOLD;
-  const cropDataUrl = extractPatternCropDataUrl(pose, frame, region);
+  const cropDataUrl = TRACKER_DEBUG ? extractPatternCropDataUrl(pose, frame, region) : null;
   const payload = {
     bestScore,
     threshold: MATCH_THRESHOLD,
@@ -217,7 +155,7 @@ function publishPatternDebug(pose, frame, cardTarget, region, bestScore, found =
     cropDataUrl,
     at: Date.now()
   };
-  if (typeof window !== "undefined") {
+  if (typeof window !== "undefined" && TRACKER_DEBUG) {
     window.__trackerDebug = payload;
   }
   logTracker("pattern:sample", {
@@ -240,12 +178,30 @@ export function parseArPatternFile(patternText) {
     .slice(0, 4);
   const orientations = sections
     .map((section) => {
-      const rows = section.split(/\n/).map((line) => line.trim()).filter(Boolean);
+      const rows = section.split(/\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.split(/\s+/).map(Number).filter((value) => Number.isFinite(value)));
       if (!rows.length) return null;
-      const size = rows.length;
       const values = [];
-      for (const row of rows) {
-        const nums = row.split(/\s+/).map(Number).filter((value) => Number.isFinite(value));
+
+      const stackedChannelSize = rows.length % 3 === 0 ? rows.length / 3 : 0;
+      if (stackedChannelSize >= 8 && rows.every((nums) => nums.length >= stackedChannelSize)) {
+        for (let row = 0; row < stackedChannelSize; row += 1) {
+          for (let col = 0; col < stackedChannelSize; col += 1) {
+            const r = rows[row]?.[col] ?? 0;
+            const g = rows[row + stackedChannelSize]?.[col] ?? r;
+            const b = rows[row + stackedChannelSize * 2]?.[col] ?? r;
+            values.push((r + g + b) / (255 * 3));
+          }
+        }
+        return values.length === stackedChannelSize * stackedChannelSize
+          ? { size: stackedChannelSize, values }
+          : null;
+      }
+
+      const size = rows.length;
+      for (const nums of rows) {
         if (nums.length >= size * 3) {
           for (let col = 0; col < size; col += 1) {
             const index = col * 3;
