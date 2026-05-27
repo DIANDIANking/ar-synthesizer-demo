@@ -63,6 +63,12 @@ function getPatternSampleRegion(cardTarget) {
 }
 
 function mapCardRegionPoint(pose, nx, ny) {
+  const location = pose?.location;
+  if (location?.topLeftCorner && location?.topRightCorner && location?.bottomRightCorner && location?.bottomLeftCorner) {
+    const top = lerpPoint(location.topLeftCorner, location.topRightCorner, nx);
+    const bottom = lerpPoint(location.bottomLeftCorner, location.bottomRightCorner, nx);
+    return lerpPoint(top, bottom, ny);
+  }
   return add(
     add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
     mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
@@ -382,14 +388,17 @@ function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
   const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
   logTracker("patt-frame:enter", { candidates: candidates.length, threshold: patternThreshold });
   for (const candidate of candidates) {
-    const base = makeGeometry(
-      point(candidate.x, candidate.y),
-      point(1, 0),
-      point(0, 1),
-      candidate.width * 0.5,
-      candidate.height * 0.5,
-      cardTarget
-    );
+    const base = candidate.location
+      ? geometryFromLocation(candidate.location, cardTarget)
+      : makeGeometry(
+          point(candidate.x, candidate.y),
+          point(1, 0),
+          point(0, 1),
+          candidate.width * 0.5,
+          candidate.height * 0.5,
+          cardTarget
+        );
+    if (!base) continue;
     const patternConfidence = samplePatternConfidence(base, frame, patternTarget, cardTarget);
     if (patternConfidence < patternThreshold) {
       logTracker("patt-frame:candidate", {
@@ -580,6 +589,13 @@ function add(a, b) {
   return point(a.x + b.x, a.y + b.y);
 }
 
+function lerpPoint(a, b, t) {
+  return point(
+    a.x + (b.x - a.x) * t,
+    a.y + (b.y - a.y) * t
+  );
+}
+
 function sub(a, b) {
   return point(a.x - b.x, a.y - b.y);
 }
@@ -634,7 +650,9 @@ function geometryFromLocation(location, cardTarget) {
   const yAxisRaw = average([sub(bl, tl), sub(br, tr)]);
   const halfW = (length(sub(tr, tl)) + length(sub(br, bl))) * 0.25;
   const halfH = (length(sub(bl, tl)) + length(sub(br, tr))) * 0.25;
-  return makeGeometry(cardCenter, normalize(xAxisRaw), normalize(yAxisRaw), halfW, halfH, cardTarget);
+  const geometry = makeGeometry(cardCenter, normalize(xAxisRaw), normalize(yAxisRaw), halfW, halfH, cardTarget);
+  geometry.location = location;
+  return geometry;
 }
 
 function makeGeometry(cardCenter, xUnit, yUnit, halfW, halfH, cardTarget) {
@@ -746,14 +764,42 @@ function findDarkSquareCandidates(frame) {
       let maxGY = gy;
       let sumX = 0;
       let sumY = 0;
+      let cornerTL = null;
+      let cornerTR = null;
+      let cornerBR = null;
+      let cornerBL = null;
+      let cornerTLScore = Infinity;
+      let cornerTRScore = -Infinity;
+      let cornerBRScore = -Infinity;
+      let cornerBLScore = Infinity;
 
       while (stack.length) {
         const idx = stack.pop();
         const cx = idx % gridW;
         const cy = Math.floor(idx / gridW);
+        const px = (cx + 0.5) * step;
+        const py = (cy + 0.5) * step;
+        const sum = px + py;
+        const diff = px - py;
         count += 1;
         sumX += cx;
         sumY += cy;
+        if (sum < cornerTLScore) {
+          cornerTLScore = sum;
+          cornerTL = point(px, py);
+        }
+        if (diff > cornerTRScore) {
+          cornerTRScore = diff;
+          cornerTR = point(px, py);
+        }
+        if (sum > cornerBRScore) {
+          cornerBRScore = sum;
+          cornerBR = point(px, py);
+        }
+        if (diff < cornerBLScore) {
+          cornerBLScore = diff;
+          cornerBL = point(px, py);
+        }
         minGX = Math.min(minGX, cx);
         maxGX = Math.max(maxGX, cx);
         minGY = Math.min(minGY, cy);
@@ -841,14 +887,42 @@ function findBrightPanelCandidates(frame) {
       let maxGY = gy;
       let sumX = 0;
       let sumY = 0;
+      let cornerTL = null;
+      let cornerTR = null;
+      let cornerBR = null;
+      let cornerBL = null;
+      let cornerTLScore = Infinity;
+      let cornerTRScore = -Infinity;
+      let cornerBRScore = -Infinity;
+      let cornerBLScore = Infinity;
 
       while (stack.length) {
         const idx = stack.pop();
         const cx = idx % gridW;
         const cy = Math.floor(idx / gridW);
+        const px = (cx + 0.5) * step;
+        const py = (cy + 0.5) * step;
+        const sum = px + py;
+        const diff = px - py;
         count += 1;
         sumX += cx;
         sumY += cy;
+        if (sum < cornerTLScore) {
+          cornerTLScore = sum;
+          cornerTL = point(px, py);
+        }
+        if (diff > cornerTRScore) {
+          cornerTRScore = diff;
+          cornerTR = point(px, py);
+        }
+        if (sum > cornerBRScore) {
+          cornerBRScore = sum;
+          cornerBR = point(px, py);
+        }
+        if (diff < cornerBLScore) {
+          cornerBLScore = diff;
+          cornerBL = point(px, py);
+        }
         minGX = Math.min(minGX, cx);
         maxGX = Math.max(maxGX, cx);
         minGY = Math.min(minGY, cy);
@@ -934,14 +1008,42 @@ function findDarkFrameCandidates(frame) {
       let maxGY = gy;
       let sumX = 0;
       let sumY = 0;
+      let cornerTL = null;
+      let cornerTR = null;
+      let cornerBR = null;
+      let cornerBL = null;
+      let cornerTLScore = Infinity;
+      let cornerTRScore = -Infinity;
+      let cornerBRScore = -Infinity;
+      let cornerBLScore = Infinity;
 
       while (stack.length) {
         const idx = stack.pop();
         const cx = idx % gridW;
         const cy = Math.floor(idx / gridW);
+        const px = (cx + 0.5) * step;
+        const py = (cy + 0.5) * step;
+        const sum = px + py;
+        const diff = px - py;
         count += 1;
         sumX += cx;
         sumY += cy;
+        if (sum < cornerTLScore) {
+          cornerTLScore = sum;
+          cornerTL = point(px, py);
+        }
+        if (diff > cornerTRScore) {
+          cornerTRScore = diff;
+          cornerTR = point(px, py);
+        }
+        if (sum > cornerBRScore) {
+          cornerBRScore = sum;
+          cornerBR = point(px, py);
+        }
+        if (diff < cornerBLScore) {
+          cornerBLScore = diff;
+          cornerBL = point(px, py);
+        }
         minGX = Math.min(minGX, cx);
         maxGX = Math.max(maxGX, cx);
         minGY = Math.min(minGY, cy);
@@ -968,13 +1070,20 @@ function findDarkFrameCandidates(frame) {
       if (aspect < 0.70 || aspect > 1.35) continue;
       const fill = count / Math.max((maxGX - minGX + 1) * (maxGY - minGY + 1), 1);
       if (fill < 0.42 || fill > 0.94) continue;
+      const location = cornerTL && cornerTR && cornerBR && cornerBL ? {
+        topLeftCorner: cornerTL,
+        topRightCorner: cornerTR,
+        bottomRightCorner: cornerBR,
+        bottomLeftCorner: cornerBL
+      } : null;
       candidates.push({
         x: ((sumX / count) + 0.5) * step,
         y: ((sumY / count) + 0.5) * step,
         width,
         height,
         area: count * step * step,
-        fill
+        fill,
+        location
       });
     }
   }
@@ -1204,10 +1313,7 @@ function sampleCardRegionDarkRatio(pose, frame, region) {
     for (let col = 0; col < cols; col++) {
       const nx = region.x + ((col + 0.5) / cols) * region.w;
       const ny = region.y + ((row + 0.5) / rows) * region.h;
-      const p = add(
-        add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
-        mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
-      );
+      const p = mapCardRegionPoint(pose, nx, ny);
       const x = Math.round(p.x);
       const y = Math.round(p.y);
       if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
@@ -1230,10 +1336,7 @@ function sampleCardRegionBrightRatio(pose, frame, region) {
     for (let col = 0; col < cols; col += 1) {
       const nx = region.x + ((col + 0.5) / cols) * region.w;
       const ny = region.y + ((row + 0.5) / rows) * region.h;
-      const p = add(
-        add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
-        mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
-      );
+      const p = mapCardRegionPoint(pose, nx, ny);
       const x = Math.round(p.x);
       const y = Math.round(p.y);
       if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;

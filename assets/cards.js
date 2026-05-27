@@ -2,7 +2,7 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-synth.patt?v=20260528-pattern-1111-v1",
+    markerUrl: "./assets/markers/pattern-synth.patt?v=20260528-pattern-1111-v2",
     markerImageUrl: "./assets/markers/synth-marker.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",
@@ -37,23 +37,23 @@ export const CARD_TARGETS = {
     },
     textSignatureMinConfidence: 0.18,
     textSignatureRegions: [
-      { x: 0.30, y: 0.30, w: 0.40, h: 0.40, minDarkRatio: 0.10 },
-      { x: 0.34, y: 0.34, w: 0.32, h: 0.32, minDarkRatio: 0.16 }
+      { x: 0.25, y: 0.25, w: 0.50, h: 0.50, minDarkRatio: 0.08 },
+      { x: 0.30, y: 0.30, w: 0.40, h: 0.40, minDarkRatio: 0.12 }
     ],
     textPanel: {
-      x: 0.30,
-      y: 0.30,
-      w: 0.40,
-      h: 0.40,
+      x: 0.25,
+      y: 0.25,
+      w: 0.50,
+      h: 0.50,
       minWhiteRatio: 0.24,
       minDarkSurroundRatio: 0.20,
       minTextDarkRatio: 0.045
     },
     patternPanel: {
-      x: 0.30,
-      y: 0.30,
-      w: 0.40,
-      h: 0.40
+      x: 0.25,
+      y: 0.25,
+      w: 0.50,
+      h: 0.50
     },
     hiroMarker: {
       enabled: true,
@@ -99,19 +99,19 @@ export const CARD_TARGETS = {
       { x: 0.318, y: 0.410, w: 0.364, h: 0.145, minDarkRatio: 0.130 }
     ],
     textPanel: {
-      x: 0.252,
-      y: 0.312,
-      w: 0.496,
-      h: 0.312,
+      x: 0.25,
+      y: 0.25,
+      w: 0.50,
+      h: 0.50,
       minWhiteRatio: 0.28,
       minDarkSurroundRatio: 0.20,
       minTextDarkRatio: 0.045
     },
     patternPanel: {
-      x: 0.30,
-      y: 0.30,
-      w: 0.40,
-      h: 0.40
+      x: 0.25,
+      y: 0.25,
+      w: 0.50,
+      h: 0.50
     },
     hiroMarker: {
       enabled: true,
