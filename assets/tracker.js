@@ -54,27 +54,11 @@ function logTracker(phase, details = {}, force = false) {
   // =========================
 
   if (details.found === true) {
-
     window.__AR_FOUND__ = true;
-
+    window.__AR_LAST_FOUND_AT__ = performance.now();
     window.__AR_TRACKER_RESULT__ = details;
-
-    window.__AR_LAST_FOUND_AT__ =
-      typeof performance !== "undefined"
-        ? performance.now()
-        : Date.now();
-
-    console.log(
-      "[tracker] window.__AR_FOUND__ = true"
-    );
-
   } else if (details.found === false) {
-
     window.__AR_FOUND__ = false;
-
-    console.log(
-      "[tracker] window.__AR_FOUND__ = false"
-    );
   }
 }
 function resetFramePatternStats() {

@@ -1990,18 +1990,16 @@ function updateMarkerFromPose(pose, scanScale, details) {
 }
 
 function isMarkerVisible() {
-
   const now =
     typeof performance !== "undefined"
       ? performance.now()
       : Date.now();
 
-  const lastFound =
-    window.__AR_LAST_FOUND_AT__ || 0;
+  const lastFound = window.__AR_LAST_FOUND_AT__ || 0;
 
   return (
     window.__AR_FOUND__ === true &&
-    now - lastFound < 1000
+    now - lastFound < 300
   );
 }
 
@@ -2099,18 +2097,29 @@ function render(time = 0) {
     const visible = isMarkerVisible();
     synthGroup.visible = visible;
 
-    if (visible) {
-      const worldX = Number.isFinite(anchor.x) ? anchor.x / 600 : 0;
-      const worldY = Number.isFinite(anchor.y) ? -anchor.y / 600 : 0;
-      const worldZ = -2;
-
-      synthGroup.position.set(worldX, worldY, worldZ);
-      synthGroup.scale.setScalar(1.2);
-
-      synthGroup.rotation.x = -0.35 + (Number.isFinite(anchor.tiltY) ? anchor.tiltY : 0) * 0.42;
-      synthGroup.rotation.y = (Number.isFinite(anchor.tiltX) ? anchor.tiltX : 0) * 0.42;
-      synthGroup.rotation.z = Number.isFinite(anchor.angle) ? anchor.angle : 0;
+    if (!visible) {
+      renderer.render(scene, camera);
+      requestAnimationFrame(render);
+      return;
     }
+
+    // 像素锚点 → Three.js 世界坐标
+    const worldX = Number.isFinite(anchor.x) ? anchor.x / 600 : 0;
+    const worldY = Number.isFinite(anchor.y) ? -anchor.y / 600 + 0.35 : 0.35;
+
+    // 固定在摄像机前方，但位置跟随卡片 x/y
+    const worldZ = -2;
+
+    synthGroup.position.set(worldX, worldY, worldZ);
+
+    // 初始大小：横屏约 70%，可继续配合双指缩放
+    const baseScale = 1.2;
+    synthGroup.scale.setScalar(baseScale * state.instrumentScale);
+
+    // 跟随卡片旋转/倾斜
+    synthGroup.rotation.x = -0.25 + (Number.isFinite(anchor.tiltY) ? anchor.tiltY : 0) * 0.42;
+    synthGroup.rotation.y = (Number.isFinite(anchor.tiltX) ? anchor.tiltX : 0) * 0.42;
+    synthGroup.rotation.z = Number.isFinite(anchor.angle) ? anchor.angle : 0;
   }
 
   renderer.render(scene, camera);
