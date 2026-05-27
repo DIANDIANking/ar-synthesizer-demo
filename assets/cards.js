@@ -2,7 +2,7 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-hechengqi.patt?v=20260527-patt-marker-v2",
+    markerUrl: "./assets/markers/pattern-hechengqi.patt?v=20260527-patt-marker-v3",
     markerImageUrl: "./assets/marker-card.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",

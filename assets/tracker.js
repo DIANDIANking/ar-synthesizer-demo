@@ -91,7 +91,51 @@ export function detectCardPoseFromFrame(cardTarget, frame = null, patternTarget 
 
 function detectPatternCardPose(cardTarget, frame, patternTarget) {
   if (!patternTarget?.orientations?.length) return null;
-  return detectHiroTextMarkerPose(cardTarget, frame, patternTarget, true);
+  return detectHiroFrameMarkerPose(cardTarget, frame, patternTarget)
+    || detectHiroTextMarkerPose(cardTarget, frame, patternTarget, true);
+}
+
+function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
+  const candidates = findDarkFrameCandidates(frame);
+  let best = null;
+  for (const candidate of candidates) {
+    const base = makeGeometry(
+      point(candidate.x, candidate.y),
+      point(1, 0),
+      point(0, 1),
+      candidate.width * 0.5,
+      candidate.height * 0.5,
+      cardTarget
+    );
+    const patternConfidence = samplePatternConfidence(base, frame, patternTarget);
+    if (patternConfidence < getMinPatternConfidence(cardTarget, patternTarget) * 0.72) continue;
+    const textConfidence = sampleTextSignature(base, cardTarget, frame);
+    const centerWhiteRatio = sampleCardRegionBrightRatio(base, frame, cardTarget?.textPanel || {
+      x: 0.30,
+      y: 0.30,
+      w: 0.40,
+      h: 0.40
+    });
+    const pose = {
+      ...base,
+      markerRatios: [candidate.fill, centerWhiteRatio, patternConfidence, 1],
+      visibleMarkers: 4,
+      wholeCardConfidence: clamp(candidate.fill * 0.62 + centerWhiteRatio * 0.30 + patternConfidence * 0.42, 0, 1),
+      patternConfidence,
+      textConfidence,
+      dataConfidence: 1,
+      usesWholeCardTarget: true,
+      source: "patt-frame-marker",
+      recognizedText: cardTarget?.recognizedText || cardTarget?.markerText?.[0] || "",
+      resolvedInstrument: cardTarget?.resolvedInstrument || cardTarget?.instrumentId || "synthesizer",
+      decodedPayload: cardTarget?.encodedPayload || ""
+    };
+    if (!isRecognizedSynthCard(pose, textConfidence, 1, cardTarget)) continue;
+    const areaScore = Math.min(1, candidate.area / (frame.width * frame.height * 0.42));
+    const score = patternConfidence * 2.6 + centerWhiteRatio * 1.2 + candidate.fill + areaScore;
+    if (!best || score > best.score) best = { score, pose };
+  }
+  return best?.pose || null;
 }
 
 function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patternRequired = false) {
@@ -492,6 +536,95 @@ function findBrightPanelCandidates(frame) {
     .slice(0, 12);
 }
 
+function findDarkFrameCandidates(frame) {
+  const step = Math.max(4, Math.round(Math.min(frame.width, frame.height) / 210));
+  const gridW = Math.ceil(frame.width / step);
+  const gridH = Math.ceil(frame.height / step);
+  const dark = new Uint8Array(gridW * gridH);
+  const seen = new Uint8Array(gridW * gridH);
+  const data = frame.imageData.data;
+
+  for (let gy = 0; gy < gridH; gy += 1) {
+    const y = Math.min(frame.height - 1, gy * step);
+    for (let gx = 0; gx < gridW; gx += 1) {
+      const x = Math.min(frame.width - 1, gx * step);
+      const i = (y * frame.width + x) * 4;
+      const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      if (luminance < 88) dark[gy * gridW + gx] = 1;
+    }
+  }
+
+  const candidates = [];
+  const stack = [];
+  const minSide = Math.min(frame.width, frame.height);
+  const minFrameW = Math.max(90, minSide * 0.20);
+  const maxFrameW = frame.width * 0.94;
+  const maxFrameH = frame.height * 0.94;
+
+  for (let gy = 0; gy < gridH; gy += 1) {
+    for (let gx = 0; gx < gridW; gx += 1) {
+      const start = gy * gridW + gx;
+      if (!dark[start] || seen[start]) continue;
+      seen[start] = 1;
+      stack.length = 0;
+      stack.push(start);
+      let count = 0;
+      let minGX = gx;
+      let maxGX = gx;
+      let minGY = gy;
+      let maxGY = gy;
+      let sumX = 0;
+      let sumY = 0;
+
+      while (stack.length) {
+        const idx = stack.pop();
+        const cx = idx % gridW;
+        const cy = Math.floor(idx / gridW);
+        count += 1;
+        sumX += cx;
+        sumY += cy;
+        minGX = Math.min(minGX, cx);
+        maxGX = Math.max(maxGX, cx);
+        minGY = Math.min(minGY, cy);
+        maxGY = Math.max(maxGY, cy);
+
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let ox = -1; ox <= 1; ox += 1) {
+            if (Math.abs(ox) + Math.abs(oy) !== 1) continue;
+            const nx = cx + ox;
+            const ny = cy + oy;
+            if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
+            const next = ny * gridW + nx;
+            if (!dark[next] || seen[next]) continue;
+            seen[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+
+      const width = (maxGX - minGX + 1) * step;
+      const height = (maxGY - minGY + 1) * step;
+      if (width < minFrameW || height < minFrameW || width > maxFrameW || height > maxFrameH) continue;
+      const aspect = width / Math.max(height, 1);
+      if (aspect < 0.70 || aspect > 1.35) continue;
+      const fill = count / Math.max((maxGX - minGX + 1) * (maxGY - minGY + 1), 1);
+      if (fill < 0.42 || fill > 0.94) continue;
+      candidates.push({
+        x: ((sumX / count) + 0.5) * step,
+        y: ((sumY / count) + 0.5) * step,
+        width,
+        height,
+        area: count * step * step,
+        fill
+      });
+    }
+  }
+
+  return candidates
+    .sort((a, b) => (b.area * b.fill) - (a.area * a.fill))
+    .slice(0, 8);
+}
+
 function insetBounds(bounds, insetRatio) {
   const dx = bounds.w * insetRatio;
   const dy = bounds.h * insetRatio;
@@ -726,6 +859,32 @@ function sampleCardRegionDarkRatio(pose, frame, region) {
     }
   }
   return total ? dark / total : 0;
+}
+
+function sampleCardRegionBrightRatio(pose, frame, region) {
+  const cols = region.cols || 20;
+  const rows = region.rows || 20;
+  let bright = 0;
+  let total = 0;
+  const data = frame.imageData.data;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const nx = region.x + ((col + 0.5) / cols) * region.w;
+      const ny = region.y + ((row + 0.5) / rows) * region.h;
+      const p = add(
+        add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
+        mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
+      );
+      const x = Math.round(p.x);
+      const y = Math.round(p.y);
+      if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
+      const i = (y * frame.width + x) * 4;
+      const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      if (luminance > 150) bright += 1;
+      total += 1;
+    }
+  }
+  return total ? bright / total : 0;
 }
 
 function samplePatternConfidence(pose, frame, patternTarget) {
