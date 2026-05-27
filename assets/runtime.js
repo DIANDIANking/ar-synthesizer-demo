@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getCardTarget, markerResourceMap } from "./cards.js?v=20260528-pattern-1111-v2";
+import { getCardTarget, markerResourceMap } from "./cards.js?v=20260528-pattern-1111-v3";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260528-pattern-1111-v2";
+import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260528-pattern-1111-v3";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -1769,7 +1769,7 @@ function scanTextCardMarker() {
     return false;
   }
 
-  const maxSide = 720;
+  const maxSide = 960;
   const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
   const width = Math.max(1, Math.floor(video.videoWidth * scale));
   const height = Math.max(1, Math.floor(video.videoHeight * scale));

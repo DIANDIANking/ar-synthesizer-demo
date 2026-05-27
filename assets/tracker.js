@@ -62,6 +62,26 @@ function getPatternSampleRegion(cardTarget) {
   return { x: 0, y: 0, w: 1, h: 1 };
 }
 
+function getPatternSampleRegions(cardTarget) {
+  const regions = [];
+  const candidates = cardTarget?.patternPanelCandidates;
+  if (Array.isArray(candidates)) {
+    for (const region of candidates) {
+      if (region?.w && region?.h) regions.push(region);
+    }
+  }
+  const primary = getPatternSampleRegion(cardTarget);
+  if (!regions.some((region) => sameRegion(region, primary))) regions.unshift(primary);
+  return regions;
+}
+
+function sameRegion(a, b) {
+  return Math.abs((a?.x ?? 0) - (b?.x ?? 0)) < 0.0001
+    && Math.abs((a?.y ?? 0) - (b?.y ?? 0)) < 0.0001
+    && Math.abs((a?.w ?? 0) - (b?.w ?? 0)) < 0.0001
+    && Math.abs((a?.h ?? 0) - (b?.h ?? 0)) < 0.0001;
+}
+
 function mapCardRegionPoint(pose, nx, ny) {
   const location = pose?.location;
   if (location?.topLeftCorner && location?.topRightCorner && location?.bottomRightCorner && location?.bottomLeftCorner) {
@@ -385,7 +405,7 @@ function detectPatternCardPose(cardTarget, frame, patternTarget) {
 function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
   const candidates = findDarkFrameCandidates(frame);
   let best = null;
-  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
+  const patternThreshold = getMinPatternCandidateConfidence(cardTarget, patternTarget);
   logTracker("patt-frame:enter", { candidates: candidates.length, threshold: patternThreshold });
   for (const candidate of candidates) {
     const base = candidate.location
@@ -537,11 +557,16 @@ function isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget)
   const markerConfidence = pose.wholeCardConfidence ?? Math.min(1, (pose.visibleMarkers || 0) / 4);
   const patternConfidence = pose.patternConfidence ?? 0;
   const patternMin = policy.minPatternConfidence ?? MATCH_THRESHOLD;
+  const patternCandidateMin = getMinPatternCandidateConfidence(cardTarget, { minConfidence: patternMin });
   let found = false;
   let reason = "";
   if (patternConfidence >= patternMin) {
     found = true;
     reason = "pattern";
+  }
+  if (!found && String(pose.source || "").includes("patt") && patternConfidence >= patternCandidateMin) {
+    found = true;
+    reason = "patt-candidate";
   }
   const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.30;
   const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.30;
@@ -579,6 +604,12 @@ function isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget)
 
 function getMinPatternConfidence(cardTarget, patternTarget) {
   return cardTarget?.recognition?.minPatternConfidence ?? patternTarget?.minConfidence ?? MATCH_THRESHOLD;
+}
+
+function getMinPatternCandidateConfidence(cardTarget, patternTarget) {
+  const direct = cardTarget?.recognition?.minPatternCandidateConfidence;
+  if (Number.isFinite(direct)) return direct;
+  return getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
 }
 
 function point(x = 0, y = 0) {
@@ -1352,7 +1383,21 @@ function sampleCardRegionBrightRatio(pose, frame, region) {
 function samplePatternConfidence(pose, frame, patternTarget, cardTarget = null) {
   if (!pose || !frame?.imageData?.data || !patternTarget?.orientations?.length) return 0;
   const size = patternTarget.size || patternTarget.orientations[0]?.size || 16;
-  const region = getPatternSampleRegion(cardTarget);
+  let bestScore = 0;
+  let bestRegion = getPatternSampleRegion(cardTarget);
+  const regions = getPatternSampleRegions(cardTarget);
+  for (const region of regions) {
+    const score = samplePatternRegionConfidence(pose, frame, patternTarget, size, region);
+    if (score > bestScore) {
+      bestScore = score;
+      bestRegion = region;
+    }
+  }
+  if (bestScore > 0.05) publishPatternDebug(pose, frame, cardTarget, bestRegion, bestScore);
+  return bestScore;
+}
+
+function samplePatternRegionConfidence(pose, frame, patternTarget, size, region) {
   const actual = [];
   const data = frame.imageData.data;
   for (let row = 0; row < size; row += 1) {
@@ -1370,7 +1415,6 @@ function samplePatternConfidence(pose, frame, patternTarget, cardTarget = null) 
       actual.push((data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255);
     }
   }
-
   let best = 0;
   for (const orientation of patternTarget.orientations) {
     if (!orientation?.values || orientation.values.length !== actual.length) continue;
@@ -1390,9 +1434,7 @@ function samplePatternConfidence(pose, frame, patternTarget, cardTarget = null) 
     }
     best = Math.max(best, total ? score / total : 0);
   }
-  const bestScore = clamp(best, 0, 1);
-  if (bestScore > 0.05) publishPatternDebug(pose, frame, cardTarget, region, bestScore);
-  return bestScore;
+  return clamp(best, 0, 1);
 }
 
 function refinePoseFromMarkers(base, markers, markerRatio, frame, cardTarget, source) {

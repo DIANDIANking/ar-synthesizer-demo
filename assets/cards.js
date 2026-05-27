@@ -2,7 +2,7 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-synth.patt?v=20260528-pattern-1111-v2",
+    markerUrl: "./assets/markers/pattern-synth.patt?v=20260528-pattern-1111-v3",
     markerImageUrl: "./assets/markers/synth-marker.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",
@@ -55,6 +55,12 @@ export const CARD_TARGETS = {
       w: 0.50,
       h: 0.50
     },
+    patternPanelCandidates: [
+      { x: 0.24, y: 0.24, w: 0.52, h: 0.52 },
+      { x: 0.25, y: 0.25, w: 0.50, h: 0.50 },
+      { x: 0.26, y: 0.26, w: 0.48, h: 0.48 },
+      { x: 0.28, y: 0.28, w: 0.44, h: 0.44 }
+    ],
     hiroMarker: {
       enabled: true,
       anchorRegion: "textPanel",
@@ -63,6 +69,7 @@ export const CARD_TARGETS = {
     },
     recognition: {
       minPatternConfidence: 0.26,
+      minPatternCandidateConfidence: 0.20,
       minTextConfidence: 0.08,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.20,
@@ -113,6 +120,12 @@ export const CARD_TARGETS = {
       w: 0.50,
       h: 0.50
     },
+    patternPanelCandidates: [
+      { x: 0.24, y: 0.24, w: 0.52, h: 0.52 },
+      { x: 0.25, y: 0.25, w: 0.50, h: 0.50 },
+      { x: 0.26, y: 0.26, w: 0.48, h: 0.48 },
+      { x: 0.28, y: 0.28, w: 0.44, h: 0.44 }
+    ],
     hiroMarker: {
       enabled: true,
       anchorRegion: "textPanel",
@@ -120,6 +133,7 @@ export const CARD_TARGETS = {
     },
     recognition: {
       minPatternConfidence: 0.26,
+      minPatternCandidateConfidence: 0.20,
       minTextConfidence: 0.10,
       minDataConfidence: 0.20,
       minCombinedConfidence: 0.24,
