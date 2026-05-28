@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getCardTarget, markerResourceMap } from "./cards.js?v=20260528-pattern-1111-v3";
+import { getCardTarget, markerResourceMap } from "./cards.js?v=20260527-entry-gate-v1";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, parseArPatternFile, trackCardPoseFromFrame } from "./tracker.js?v=20260528-pattern-1111-v3";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260527-entry-gate-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -40,12 +40,14 @@ const REQUIRED_FOUND_FRAMES = 1;
 const MARKER_CANDIDATE_RESET_MS = 420;
 const MIN_SYNTH_NOTE_HOLD_MS = 230;
 const MIN_BASS_NOTE_HOLD_MS = 280;
-const MARKER_CHILD_SYNTH_SCALE = 1.6;
+const FIXED_SYNTH_SCALE = 1.0;
 const MARKER_REFERENCE_SIZE = 0.36;
 const MARKER_REFERENCE_DISTANCE = 6.1;
+const MARKER_MIN_DISTANCE = 2.35;
+const MARKER_MAX_DISTANCE = 12.5;
 const USER_SCALE_LIMITS = {
-  min: 0.5,
-  max: 4.0
+  min: 0.55,
+  max: 1.85
 };
 const ORIGINAL_GUITAR_PARAMS = {
   style: "folk",
@@ -79,9 +81,7 @@ const GUITE222_BASE_FREQ = 82.41;
 const GUITE222_BASE_MIDI = 48;
 
 const synthMarkerBinding = markerResourceMap.hechengqi;
-const DEBUG_MARKER_BOX = new URLSearchParams(location.search).has("debugBox");
 window.markerResourceMap = markerResourceMap;
-window.DEBUG_MARKER_BOX = DEBUG_MARKER_BOX;
 window.activeInstrument = null;
 
 const state = {
@@ -138,8 +138,6 @@ let raycaster = null;
 let pointer = null;
 let anchor = createEmptyAnchor();
 let lastCardPoseScan = null;
-let markerPatternTarget = null;
-let markerPatternLoading = null;
 let foundFrameCount = 0;
 let lastCandidateAt = 0;
 let interactives = [];
@@ -477,15 +475,8 @@ function noteNameToMidi(note = "C4") {
 
 async function initSynthesizer() {
   unlockAudio();
-  if (!PRESETS[state.currentPreset]) {
-    selectPreset("SYNTH");
-    return true;
-  }
-  updateDisplay(
-    state.currentPreset === "DRUM" ? "DRUM KIT" : state.currentPreset,
-    state.currentMode === "synth" || state.currentMode === "bass" ? state.currentWave : "PRESET",
-    "READY"
-  );
+  selectPreset("SYNTH");
+  updateDisplay("SYNTH", state.currentWave, "MARKER READY");
   return true;
 }
 
@@ -502,7 +493,6 @@ async function playSynthesizerNote(options = {}) {
 
 function activateSynthesizerMarker(details = {}) {
   const config = details.markerResource || synthMarkerBinding;
-  const alreadyActive = window.activeInstrument?.cardId === config.cardId;
   if (window.activeInstrument?.cardId !== config.cardId) {
     window.activeInstrument = {
       ...config,
@@ -511,7 +501,7 @@ function activateSynthesizerMarker(details = {}) {
     };
     document.body.classList.add("synthesizer-active");
   }
-  if (!alreadyActive) initSynthesizer();
+  initSynthesizer();
 }
 
 function deactivateSynthesizerMarker() {
@@ -1120,11 +1110,10 @@ function createScene() {
   scene.add(rim);
 
   synthGroup = new THREE.Group();
-  synthGroup.name = DEBUG_MARKER_BOX ? "Debug_Marker_Box" : "AR_Mini_Synth_Workstation";
+  synthGroup.name = "AR_Mini_Synth_Workstation";
   synthGroup.visible = false;
   scene.add(synthGroup);
-  if (DEBUG_MARKER_BOX) buildDebugMarkerBox();
-  else buildSynthModel();
+  buildSynthModel();
   resizeCanvas();
   bindCanvasEvents(canvas);
   requestAnimationFrame(render);
@@ -1134,17 +1123,6 @@ function addInteractive(mesh, interaction) {
   mesh.userData.interaction = interaction;
   interactives.push(mesh);
   return mesh;
-}
-
-function buildDebugMarkerBox() {
-  interactives = [];
-  const box = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.5, 0.5),
-    makeMaterial({ color: 0xff0000, roughness: 0.5, metalness: 0.1 })
-  );
-  box.position.set(0, 0.5, 0);
-  box.name = "debug_marker_box";
-  synthGroup.add(box);
 }
 
 function buildSynthModel() {
@@ -1703,35 +1681,9 @@ function getScanner() {
   return scanCtx ? { canvas: scanCanvas, ctx: scanCtx } : null;
 }
 
-async function ensureMarkerPatternTarget(cardTarget = getCardTarget(REQUIRED_CARD_ID)) {
-  if (markerPatternTarget || markerPatternLoading) return markerPatternLoading;
-  const url = cardTarget?.markerResource?.markerUrl;
-  if (!url) return null;
-  markerPatternLoading = fetch(url, { cache: "no-store" })
-    .then((response) => {
-      if (!response.ok) throw new Error(`Pattern load failed: ${response.status}`);
-      return response.text();
-    })
-    .then((text) => {
-      markerPatternTarget = parseArPatternFile(text);
-      if (!markerPatternTarget) throw new Error("Pattern parse failed");
-      return markerPatternTarget;
-    })
-    .catch((error) => {
-      console.warn("[marker] .patt load failed", error);
-      markerPatternTarget = null;
-      return null;
-    })
-    .finally(() => {
-      markerPatternLoading = null;
-    });
-  return markerPatternLoading;
-}
-
 function startMarkerTracking() {
   if (markerFrame) return;
   lastScanAt = 0;
-  ensureMarkerPatternTarget(getCardTarget(REQUIRED_CARD_ID));
   markerFrame = requestAnimationFrame(scanMarkerFrame);
 }
 
@@ -1769,7 +1721,7 @@ function scanTextCardMarker() {
     return false;
   }
 
-  const maxSide = 960;
+  const maxSide = 720;
   const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
   const width = Math.max(1, Math.floor(video.videoWidth * scale));
   const height = Math.max(1, Math.floor(video.videoHeight * scale));
@@ -1778,14 +1730,9 @@ function scanTextCardMarker() {
   scanner.ctx.drawImage(video, 0, 0, width, height);
   const imageData = scanner.ctx.getImageData(0, 0, width, height);
   const frame = { imageData, width, height };
-  const cardTarget = getCardTarget(REQUIRED_CARD_ID);
-  if (!markerPatternTarget && !markerPatternLoading) ensureMarkerPatternTarget(cardTarget);
-  if (!markerPatternTarget) {
-    hideMarker("正在加载 SYNTH marker");
-    return false;
-  }
   const pose = updateMarkerFromImageTracker(scale, frame)
-    || detectCardPoseFromFrame(cardTarget, frame, markerPatternTarget);
+    || detectCardPoseFromFrame(getCardTarget(REQUIRED_CARD_ID), frame);
+  const cardTarget = getCardTarget(REQUIRED_CARD_ID);
   const tracked = Boolean(pose && updateMarkerFromPose(pose, scale, {
     payload: pose.decodedPayload || cardTarget.encodedPayload || "instrument=synth",
     cardId: REQUIRED_CARD_ID,
@@ -1825,17 +1772,13 @@ function dist(a, b) {
 function updateMarkerFromImageTracker(scanScale, frame) {
   if (!lastCardPoseScan || !state.marker.cardId) return false;
   const cardTarget = getCardTarget(state.marker.cardId);
-  const pose = trackCardPoseFromFrame(lastCardPoseScan, cardTarget, frame, markerPatternTarget);
-  if (!isReliableImageTrackedPose(pose, cardTarget, frame, markerPatternTarget)) return false;
+  const pose = trackCardPoseFromFrame(lastCardPoseScan, cardTarget, frame);
+  if (!isReliableImageTrackedPose(pose, cardTarget, frame)) return false;
   return pose;
 }
 
-function isReliableImageTrackedPose(pose, cardTarget, frame, patternTarget = null) {
+function isReliableImageTrackedPose(pose, cardTarget, frame) {
   if (!pose) return false;
-  if (patternTarget) {
-    const minPattern = cardTarget?.recognition?.minPatternConfidence ?? patternTarget.minConfidence ?? 0.35;
-    if ((pose.patternConfidence ?? 0) >= minPattern * 0.84) return true;
-  }
   const strongCorners = (pose.markerRatios || [])
     .filter((ratio) => ratio >= MIN_IMAGE_TRACK_CORNER_RATIO)
     .length;
@@ -1846,12 +1789,12 @@ function isReliableImageTrackedPose(pose, cardTarget, frame, patternTarget = nul
   pose.decodedPayload = cardTarget?.encodedPayload || "";
   const policy = cardTarget?.recognition || {};
   const markerConfidence = pose.wholeCardConfidence ?? 0;
-  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.30;
-  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.30;
-  const combinedMin = policy.minCombinedConfidence ?? 0.35;
+  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.42;
+  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.48;
+  const combinedMin = policy.minCombinedConfidence ?? 0.54;
   const hasEnoughCorners = pose.visibleMarkers >= REQUIRED_IMAGE_TRACK_CORNERS
     && strongCorners >= Math.max(3, REQUIRED_IMAGE_TRACK_CORNERS - 1)
-    && markerConfidence >= Math.min(MIN_IMAGE_TRACK_CONFIDENCE, policy.minCornerConfidence ?? 0.30);
+    && markerConfidence >= Math.min(MIN_IMAGE_TRACK_CONFIDENCE, policy.minCornerConfidence ?? 0.44);
   const combined = markerConfidence * 0.48 + textConfidence * 0.34 + dataConfidence * 0.18;
   return hasEnoughCorners
     && (textConfidence >= textMin || dataConfidence >= dataMin || textConfidence >= textMin * 0.72)
@@ -1979,8 +1922,6 @@ function updateMarkerFromPose(pose, scanScale, details) {
     tiltY: clamp((bottomW - topW) / Math.max(topW + bottomW, 1), -0.38, 0.38)
   };
   lastCardPoseScan = pose;
-  window.__AR_FOUND__ = true;
-  window.__AR_LAST_FOUND_AT__ = performance.now();
   synthGroup.visible = true;
   setSynthActive(true);
   activateSynthesizerMarker(details);
@@ -1990,7 +1931,7 @@ function updateMarkerFromPose(pose, scanScale, details) {
 }
 
 function isMarkerVisible() {
-  return state.marker.locked === true;
+  return state.marker.locked;
 }
 
 function updateMarkerLost() {
@@ -2015,7 +1956,6 @@ function hideMarker(promptText) {
   cancelActiveControlPointers();
   muteOutputForMarkerLoss();
   deactivateSynthesizerMarker();
-  window.__AR_FOUND__ = false;
   if (synthGroup) synthGroup.visible = false;
   setSynthActive(false);
   if (promptText) setPrompt(promptText);
@@ -2030,7 +1970,7 @@ function markerTargetForView() {
     x: position.x,
     y: position.y,
     z,
-    scale: MARKER_CHILD_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1),
+    scale: FIXED_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1),
     angle: state.marker.angle,
     tiltX: state.marker.tiltX,
     tiltY: state.marker.tiltY
@@ -2040,7 +1980,11 @@ function markerTargetForView() {
 function markerZFromCardSize(defaultZ = 0.10) {
   if (!camera) return defaultZ;
   const size = Math.max(0.001, state.marker.size || MARKER_REFERENCE_SIZE);
-  const distance = MARKER_REFERENCE_DISTANCE * (MARKER_REFERENCE_SIZE / size);
+  const distance = clamp(
+    MARKER_REFERENCE_DISTANCE * (MARKER_REFERENCE_SIZE / size),
+    MARKER_MIN_DISTANCE,
+    MARKER_MAX_DISTANCE
+  );
   return camera.position.z - distance;
 }
 
@@ -2075,25 +2019,25 @@ function updateAnchor(portrait) {
 }
 
 function render(time = 0) {
-  enforceMarkerTimeout(time);
-
+  enforceMarkerTimeout(time || performance.now());
   const stage = $("#ar-stage");
   const rect = stage?.getBoundingClientRect();
   const portrait = (rect?.height || window.innerHeight) >= (rect?.width || window.innerWidth);
-
   updateAnchor(portrait);
 
   if (synthGroup) {
     const visible = isMarkerVisible();
     synthGroup.visible = visible;
-
-    if (visible) {
-      synthGroup.position.set(anchor.x, anchor.y, anchor.z);
-      synthGroup.scale.setScalar(anchor.scale);
-      synthGroup.rotation.x = -0.25 + (Number.isFinite(anchor.tiltY) ? anchor.tiltY : 0) * 0.42;
-      synthGroup.rotation.y = (Number.isFinite(anchor.tiltX) ? anchor.tiltX : 0) * 0.42;
-      synthGroup.rotation.z = Number.isFinite(anchor.angle) ? anchor.angle : 0;
+    if (!visible) {
+      renderer.render(scene, camera);
+      requestAnimationFrame(render);
+      return;
     }
+    synthGroup.position.set(anchor.x, anchor.y, anchor.z);
+    synthGroup.scale.setScalar(anchor.scale);
+    synthGroup.rotation.x = -0.35 + anchor.tiltY * 0.42;
+    synthGroup.rotation.y = anchor.tiltX * 0.42;
+    synthGroup.rotation.z = anchor.angle;
   }
 
   renderer.render(scene, camera);

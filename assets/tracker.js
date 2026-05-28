@@ -1,258 +1,7 @@
-const MATCH_THRESHOLD = 0.35;
-const TRACKER_DEBUG = typeof location !== "undefined"
-  && new URLSearchParams(location.search).get("debug") === "tracker";
-let lastTrackerLogAt = 0;
-let frameBestPatternScore = 0;
-let debugCropCanvas = null;
-const TRACKER_LOG_INTERVAL_MS = 700;
-
-function logTracker(phase, details = {}, force = false) {
-  if (!TRACKER_DEBUG) return;
-
-  const now =
-    typeof performance !== "undefined"
-      ? performance.now()
-      : Date.now();
-
-  const important =
-    details.found === true ||
-    details.found === false;
-
-  if (
-    !force &&
-    !important &&
-    now - lastTrackerLogAt < TRACKER_LOG_INTERVAL_MS
-  ) {
-    return;
-  }
-
-  lastTrackerLogAt = now;
-
-  const bestScore =
-    details.bestScore ??
-    details.score ??
-    details.patternConfidence;
-
-  // =========================
-  // 基础日志
-  // =========================
-
-  if (bestScore != null) {
-    console.log("[tracker] bestScore:", bestScore);
-  }
-
-  console.log(
-    "[tracker] threshold:",
-    details.threshold ?? MATCH_THRESHOLD
-  );
-
-  if ("found" in details) {
-    console.log("[tracker] found:", details.found);
-  }
-
-  console.log(`[tracker] ${phase}:`, details);
-}
-function resetFramePatternStats() {
-  frameBestPatternScore = 0;
-}
-
-function getPatternSampleRegion(cardTarget) {
-  const panel = cardTarget?.patternPanel;
-  if (panel?.w && panel?.h) return panel;
-  return { x: 0, y: 0, w: 1, h: 1 };
-}
-
-function getPatternSampleRegions(cardTarget) {
-  const regions = [];
-  const candidates = cardTarget?.patternPanelCandidates;
-  if (Array.isArray(candidates)) {
-    for (const region of candidates) {
-      if (region?.w && region?.h) regions.push(region);
-    }
-  }
-  const primary = getPatternSampleRegion(cardTarget);
-  if (!regions.some((region) => sameRegion(region, primary))) regions.unshift(primary);
-  return regions;
-}
-
-function sameRegion(a, b) {
-  return Math.abs((a?.x ?? 0) - (b?.x ?? 0)) < 0.0001
-    && Math.abs((a?.y ?? 0) - (b?.y ?? 0)) < 0.0001
-    && Math.abs((a?.w ?? 0) - (b?.w ?? 0)) < 0.0001
-    && Math.abs((a?.h ?? 0) - (b?.h ?? 0)) < 0.0001;
-}
-
-function mapCardRegionPoint(pose, nx, ny) {
-  const location = pose?.location;
-  if (location?.topLeftCorner && location?.topRightCorner && location?.bottomRightCorner && location?.bottomLeftCorner) {
-    const top = lerpPoint(location.topLeftCorner, location.topRightCorner, nx);
-    const bottom = lerpPoint(location.bottomLeftCorner, location.bottomRightCorner, nx);
-    return lerpPoint(top, bottom, ny);
-  }
-  return add(
-    add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
-    mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
-  );
-}
-
-function getDebugCropCanvas() {
-  if (!debugCropCanvas && typeof document !== "undefined") {
-    debugCropCanvas = document.createElement("canvas");
-  }
-  return debugCropCanvas;
-}
-
-function extractPatternCropDataUrl(pose, frame, region) {
-  if (!pose || !frame?.imageData?.data || typeof document === "undefined") {
-    return null;
-  }
-
-  const corners = [
-    mapCardRegionPoint(pose, region.x, region.y),
-    mapCardRegionPoint(pose, region.x + region.w, region.y),
-    mapCardRegionPoint(pose, region.x + region.w, region.y + region.h),
-    mapCardRegionPoint(pose, region.x, region.y + region.h)
-  ];
-
-  const xs = corners.map((p) => p.x);
-  const ys = corners.map((p) => p.y);
-
-  const minX = clamp(Math.floor(Math.min(...xs)), 0, frame.width - 1);
-  const maxX = clamp(Math.ceil(Math.max(...xs)), minX + 1, frame.width);
-
-  const minY = clamp(Math.floor(Math.min(...ys)), 0, frame.height - 1);
-  const maxY = clamp(Math.ceil(Math.max(...ys)), minY + 1, frame.height);
-
-  const cropW = maxX - minX;
-  const cropH = maxY - minY;
-
-  if (cropW < 2 || cropH < 2) {
-    return null;
-  }
-
-  const canvas = getDebugCropCanvas();
-
-  const outSize = 128;
-
-  canvas.width = outSize;
-  canvas.height = outSize;
-
-  const ctx = canvas.getContext("2d");
-
-  if (!ctx) {
-    return null;
-  }
-
-  const temp = document.createElement("canvas");
-
-  temp.width = frame.width;
-  temp.height = frame.height;
-
-  temp.getContext("2d")?.putImageData(frame.imageData, 0, 0);
-
-  ctx.drawImage(
-    temp,
-    minX,
-    minY,
-    cropW,
-    cropH,
-    0,
-    0,
-    outSize,
-    outSize
-  );
-
-  const debugUrl = canvas.toDataURL("image/png");
-  return debugUrl;
-}
-
-function publishPatternDebug(pose, frame, cardTarget, region, bestScore, found = null) {
-  frameBestPatternScore = Math.max(frameBestPatternScore, bestScore);
-  const patternThreshold = cardTarget
-    ? getMinPatternConfidence(cardTarget, { minConfidence: MATCH_THRESHOLD })
-    : MATCH_THRESHOLD;
-  const cropDataUrl = TRACKER_DEBUG ? extractPatternCropDataUrl(pose, frame, region) : null;
-  const payload = {
-    bestScore,
-    threshold: MATCH_THRESHOLD,
-    patternThreshold,
-    found: found ?? bestScore >= patternThreshold,
-    patternPanel: region,
-    cropDataUrl,
-    at: Date.now()
-  };
-  if (typeof window !== "undefined" && TRACKER_DEBUG) {
-    window.__trackerDebug = payload;
-  }
-  logTracker("pattern:sample", {
-    bestScore,
-    score: bestScore,
-    threshold: MATCH_THRESHOLD,
-    patternThreshold,
-    found: payload.found,
-    patternPanel: region,
-    hasCrop: Boolean(cropDataUrl)
-  });
-}
-
-export function parseArPatternFile(patternText) {
-  const sections = String(patternText || "")
-    .trim()
-    .split(/\n\s*\n/)
-    .map((section) => section.trim())
-    .filter(Boolean)
-    .slice(0, 4);
-  const orientations = sections
-    .map((section) => {
-      const rows = section.split(/\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split(/\s+/).map(Number).filter((value) => Number.isFinite(value)));
-      if (!rows.length) return null;
-      const values = [];
-
-      const stackedChannelSize = rows.length % 3 === 0 ? rows.length / 3 : 0;
-      if (stackedChannelSize >= 8 && rows.every((nums) => nums.length >= stackedChannelSize)) {
-        for (let row = 0; row < stackedChannelSize; row += 1) {
-          for (let col = 0; col < stackedChannelSize; col += 1) {
-            const r = rows[row]?.[col] ?? 0;
-            const g = rows[row + stackedChannelSize]?.[col] ?? r;
-            const b = rows[row + stackedChannelSize * 2]?.[col] ?? r;
-            values.push((r + g + b) / (255 * 3));
-          }
-        }
-        return values.length === stackedChannelSize * stackedChannelSize
-          ? { size: stackedChannelSize, values }
-          : null;
-      }
-
-      const size = rows.length;
-      for (const nums of rows) {
-        if (nums.length >= size * 3) {
-          for (let col = 0; col < size; col += 1) {
-            const index = col * 3;
-            values.push((nums[index] + nums[index + 1] + nums[index + 2]) / (255 * 3));
-          }
-        } else if (nums.length >= size) {
-          for (let col = 0; col < size; col += 1) values.push(nums[col] / 255);
-        }
-      }
-      return values.length === size * size ? { size, values } : null;
-    })
-    .filter(Boolean);
-  return orientations.length ? { orientations, size: orientations[0].size, minConfidence: MATCH_THRESHOLD } : null;
-}
-
-export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null, patternTarget = null) {
-  if (!previousPose?.location || !frame?.imageData?.data) {
-    logTracker("track:skip", { found: false, reason: "no-previous-pose-or-frame" });
-    return null;
-  }
+export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null) {
+  if (!previousPose?.location || !frame?.imageData?.data) return null;
   const base = geometryFromLocation(previousPose.location, cardTarget);
-  if (!base) {
-    logTracker("track:skip", { found: false, reason: "no-geometry" });
-    return null;
-  }
+  if (!base) return null;
   const markerRatio = cardTarget?.cornerMarkerRatio || { x: 0.84, y: 0.855 };
   const markerRadius = Math.max(5, base.halfW * 0.075);
   const searchRadius = Math.max(12, markerRadius * 2.65);
@@ -261,221 +10,50 @@ export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null, p
     return hit ? { ...hit, index } : null;
   });
   const refined = refinePoseFromMarkers(base, markers, markerRatio, frame, cardTarget, "image-marker");
-  if (!refined) {
-    logTracker("track:skip", { found: false, reason: "refine-failed" });
-    return null;
-  }
-  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget, cardTarget);
-  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget) * 0.84;
-  if (patternTarget && patternConfidence < patternThreshold) {
-    logTracker("track:reject", {
-      found: false,
-      reason: "pattern-below-threshold",
-      score: patternConfidence,
-      threshold: patternThreshold,
-      source: "image-marker"
-    });
-    return null;
-  }
+  if (!refined) return null;
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
-  refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
-  logTracker("track:found", {
-    found: true,
-    score: patternConfidence,
-    textConfidence,
-    dataConfidence,
-    source: "image-marker"
-  }, true);
   return {
     ...refined,
-    patternConfidence,
     textConfidence,
     dataConfidence,
     decodedPayload: cardTarget?.encodedPayload || ""
   };
 }
 
-export function detectCardPoseFromFrame(cardTarget, frame = null, patternTarget = null) {
-  resetFramePatternStats();
-  if (!frame?.imageData?.data || !frame.width || !frame.height) {
-    logTracker("detect:skip", { found: false, reason: "no-frame" });
-    return null;
-  }
-  logTracker("detect:enter", {
-    frame: `${frame.width}x${frame.height}`,
-    hasPattern: Boolean(patternTarget?.orientations?.length)
-  });
-  const patternPose = detectPatternCardPose(cardTarget, frame, patternTarget);
-  if (patternPose) {
-    logTracker("detect:found", {
-      found: true,
-      bestScore: patternPose.patternConfidence,
-      score: patternPose.patternConfidence,
-      source: patternPose.source
-    }, true);
-    return patternPose;
-  }
-  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame, patternTarget, false);
-  if (textPanelPose) {
-    logTracker("detect:found", {
-      found: true,
-      bestScore: textPanelPose.patternConfidence,
-      score: textPanelPose.patternConfidence,
-      source: textPanelPose.source
-    }, true);
-    return textPanelPose;
-  }
-  if (!textPanelPose) {
-    logTracker("detect:miss", {
-      found: false,
-      reason: "no-pattern-or-text-panel-match",
-      bestScore: frameBestPatternScore,
-      threshold: MATCH_THRESHOLD
-    });
-  }
-  if (cardTarget?.hiroMarker?.requireTextPanelOnly && !patternTarget) {
-    logTracker("detect:skip", { found: false, reason: "text-panel-only-without-pattern" });
-    return null;
-  }
+export function detectCardPoseFromFrame(cardTarget, frame = null) {
+  if (!frame?.imageData?.data || !frame.width || !frame.height) return null;
+  const textPanelPose = detectHiroTextMarkerPose(cardTarget, frame);
+  if (textPanelPose) return textPanelPose;
+  if (cardTarget?.hiroMarker?.requireTextPanelOnly) return null;
 
   const candidates = findDarkSquareCandidates(frame);
-  if (candidates.length < 4) {
-    logTracker("detect:skip", { found: false, reason: "not-enough-corners", candidates: candidates.length });
-    return null;
-  }
+  if (candidates.length < 4) return null;
 
   const corners = chooseBestCardCorners(candidates, cardTarget, frame) || chooseExtremeCorners(candidates);
-  if (!corners) {
-    logTracker("detect:skip", { found: false, reason: "no-corners" });
-    return null;
-  }
+  if (!corners) return null;
 
   const markerRatio = cardTarget?.cornerMarkerRatio || { x: 0.84, y: 0.855 };
   const base = geometryFromMarkerCenters(corners, markerRatio, cardTarget);
-  if (!base) {
-    logTracker("detect:skip", { found: false, reason: "geometry-failed" });
-    return null;
-  }
+  if (!base) return null;
   const refined = refinePoseFromMarkers(base, corners, markerRatio, frame, cardTarget, "text-card");
-  const patternConfidence = samplePatternConfidence(refined, frame, patternTarget, cardTarget);
-  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget);
-  if (patternTarget && patternConfidence < patternThreshold) {
-    logTracker("detect:text-card:reject", {
-      found: false,
-      reason: "pattern-below-threshold",
-      bestScore: patternConfidence,
-      score: patternConfidence,
-      threshold: patternThreshold,
-      frameBestScore: frameBestPatternScore,
-      source: "text-card"
-    });
-    return null;
-  }
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
-  refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
-  logTracker("detect:found", {
-    found: true,
-    score: patternConfidence,
-    textConfidence,
-    dataConfidence,
-    source: "text-card"
-  }, true);
   return {
     ...refined,
-    patternConfidence,
     textConfidence,
     dataConfidence,
     decodedPayload: cardTarget?.encodedPayload || ""
   };
 }
 
-function detectPatternCardPose(cardTarget, frame, patternTarget) {
-  if (!patternTarget?.orientations?.length) {
-    logTracker("pattern:skip", { found: false, reason: "no-pattern-target" });
-    return null;
-  }
-  return detectHiroFrameMarkerPose(cardTarget, frame, patternTarget)
-    || detectHiroTextMarkerPose(cardTarget, frame, patternTarget, true);
-}
-
-function detectHiroFrameMarkerPose(cardTarget, frame, patternTarget) {
-  const candidates = findDarkFrameCandidates(frame);
-  let best = null;
-  const patternThreshold = getMinPatternCandidateConfidence(cardTarget, patternTarget);
-  logTracker("patt-frame:enter", { candidates: candidates.length, threshold: patternThreshold });
-  for (const candidate of candidates) {
-    const base = candidate.location
-      ? geometryFromLocation(candidate.location, cardTarget)
-      : makeGeometry(
-          point(candidate.x, candidate.y),
-          point(1, 0),
-          point(0, 1),
-          candidate.width * 0.5,
-          candidate.height * 0.5,
-          cardTarget
-        );
-    if (!base) continue;
-    const patternConfidence = samplePatternConfidence(base, frame, patternTarget, cardTarget);
-    if (patternConfidence < patternThreshold) {
-      logTracker("patt-frame:candidate", {
-        found: false,
-        score: patternConfidence,
-        threshold: patternThreshold,
-        reason: "pattern-below-threshold"
-      });
-      continue;
-    }
-    const textConfidence = sampleTextSignature(base, cardTarget, frame);
-    const centerWhiteRatio = sampleCardRegionBrightRatio(base, frame, cardTarget?.textPanel || {
-      x: 0.30,
-      y: 0.30,
-      w: 0.40,
-      h: 0.40
-    });
-    const pose = {
-      ...base,
-      markerRatios: [candidate.fill, centerWhiteRatio, patternConfidence, 1],
-      visibleMarkers: 4,
-      wholeCardConfidence: clamp(candidate.fill * 0.62 + centerWhiteRatio * 0.30 + patternConfidence * 0.42, 0, 1),
-      patternConfidence,
-      textConfidence,
-      dataConfidence: 1,
-      usesWholeCardTarget: true,
-      source: "patt-frame-marker",
-      recognizedText: cardTarget?.recognizedText || cardTarget?.markerText?.[0] || "",
-      resolvedInstrument: cardTarget?.resolvedInstrument || cardTarget?.instrumentId || "synthesizer",
-      decodedPayload: cardTarget?.encodedPayload || ""
-    };
-    if (!isRecognizedSynthCard(pose, textConfidence, 1, cardTarget)) continue;
-    const areaScore = Math.min(1, candidate.area / (frame.width * frame.height * 0.42));
-    const score = patternConfidence * 2.6 + centerWhiteRatio * 1.2 + candidate.fill + areaScore;
-    if (!best || score > best.score) {
-      logTracker("patt-frame:best", { found: true, score, patternConfidence, source: "patt-frame-marker" });
-      best = { score, pose };
-    }
-  }
-  if (!best) logTracker("patt-frame:miss", { found: false, reason: "no-candidate-passed" });
-  return best?.pose || null;
-}
-
-function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patternRequired = false) {
+function detectHiroTextMarkerPose(cardTarget, frame) {
   const panel = cardTarget?.textPanel;
-  if (!cardTarget?.hiroMarker?.enabled || !panel?.w || !panel?.h) {
-    logTracker("hiro-text:skip", { found: false, reason: "hiro-disabled-or-no-panel" });
-    return null;
-  }
+  if (!cardTarget?.hiroMarker?.enabled || !panel?.w || !panel?.h) return null;
   const candidates = findBrightPanelCandidates(frame);
   let best = null;
-  const patternThreshold = getMinPatternConfidence(cardTarget, patternTarget);
-  logTracker("hiro-text:enter", {
-    candidates: candidates.length,
-    patternRequired,
-    threshold: patternThreshold
-  });
   for (const candidate of candidates) {
     const panelAspect = panel.w / panel.h;
     const aspect = candidate.width / Math.max(candidate.height, 1);
@@ -493,16 +71,6 @@ function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patte
     const panelCenterOffsetY = (panel.y + panel.h * 0.5 - 0.5) * halfH * 2;
     const cardCenter = point(candidate.x - panelCenterOffsetX, candidate.y - panelCenterOffsetY);
     const base = makeGeometry(cardCenter, point(1, 0), point(0, 1), halfW, halfH, cardTarget);
-    const patternConfidence = samplePatternConfidence(base, frame, patternTarget, cardTarget);
-    if (patternRequired && patternConfidence < patternThreshold) {
-      logTracker("hiro-text:candidate", {
-        found: false,
-        score: patternConfidence,
-        threshold: patternThreshold,
-        reason: "pattern-below-threshold"
-      });
-      continue;
-    }
     const textConfidence = sampleTextSignature(base, cardTarget, frame);
     const dataConfidence = 1;
     const wholeCardConfidence = clamp(
@@ -515,101 +83,35 @@ function detectHiroTextMarkerPose(cardTarget, frame, patternTarget = null, patte
       markerRatios: [surroundDarkRatio, whiteRatio, textDarkRatio, 1],
       visibleMarkers: 4,
       wholeCardConfidence,
-      patternConfidence,
       textConfidence,
       dataConfidence,
       usesWholeCardTarget: true,
-      source: patternRequired ? "patt-marker" : "hiro-text-marker",
+      source: "hiro-text-marker",
       recognizedText: cardTarget?.recognizedText || cardTarget?.markerText?.[0] || "",
       resolvedInstrument: cardTarget?.resolvedInstrument || cardTarget?.instrumentId || "synthesizer",
       decodedPayload: cardTarget?.encodedPayload || ""
     };
     if (!isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget)) continue;
-    const inferredCardRatio = Math.max((base.halfW * 2) / frame.width, (base.halfH * 2) / frame.height);
-    const lowPattern = patternTarget && patternConfidence < getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
-    const sizePenalty = lowPattern ? clamp((inferredCardRatio - 0.76) / 0.48, 0, 0.70) : 0;
-    const score = patternConfidence * 3.0
-      + surroundDarkRatio * 1.7
-      + Math.min(1, textDarkRatio / 0.18) * 1.9
-      + textConfidence * 1.15
-      + whiteRatio * 0.45
-      - sizePenalty;
-    if (!best || score > best.score) {
-      logTracker("hiro-text:best", {
-        found: true,
-        score,
-        patternConfidence,
-        source: patternRequired ? "patt-marker" : "hiro-text-marker"
-      });
-      best = { score, pose };
-    }
+    const score = wholeCardConfidence + textConfidence + Math.min(1, candidate.area / (frame.width * frame.height * 0.18));
+    if (!best || score > best.score) best = { score, pose };
   }
-  if (!best) logTracker("hiro-text:miss", { found: false, reason: "no-candidate-passed", patternRequired });
   return best?.pose || null;
 }
 
 function isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget) {
-  if (!pose) {
-    logTracker("recognize", { found: false, reason: "no-pose" });
-    return false;
-  }
+  if (!pose) return false;
   const policy = cardTarget?.recognition || {};
   const markerConfidence = pose.wholeCardConfidence ?? Math.min(1, (pose.visibleMarkers || 0) / 4);
-  const patternConfidence = pose.patternConfidence ?? 0;
-  const patternMin = policy.minPatternConfidence ?? MATCH_THRESHOLD;
-  const patternCandidateMin = getMinPatternCandidateConfidence(cardTarget, { minConfidence: patternMin });
-  let found = false;
-  let reason = "";
-  if (patternConfidence >= patternMin) {
-    found = true;
-    reason = "pattern";
-  }
-  if (!found && String(pose.source || "").includes("patt") && patternConfidence >= patternCandidateMin) {
-    found = true;
-    reason = "patt-candidate";
-  }
-  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.30;
-  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.30;
-  const combinedMin = policy.minCombinedConfidence ?? 0.35;
-  const cornerMin = policy.minCornerConfidence ?? 0.30;
+  const textMin = policy.minTextConfidence ?? cardTarget?.textSignatureMinConfidence ?? 0.42;
+  const dataMin = policy.minDataConfidence ?? cardTarget?.dataSignature?.minConfidence ?? 0.48;
+  const combinedMin = policy.minCombinedConfidence ?? 0.54;
+  const cornerMin = policy.minCornerConfidence ?? 0.44;
   const hasText = textConfidence >= textMin;
   const hasData = dataConfidence >= dataMin;
   const combined = markerConfidence * 0.48 + textConfidence * 0.34 + dataConfidence * 0.18;
-  if (!found && markerConfidence >= 0.96 && textConfidence >= textMin * 0.72) {
-    found = true;
-    reason = "marker+text";
-  }
-  if (!found && markerConfidence >= cornerMin && (hasText || hasData) && combined >= combinedMin) {
-    found = true;
-    reason = "combined";
-  }
-  if (!found && markerConfidence >= 0.72 && textConfidence >= textMin * 0.82 && dataConfidence >= dataMin * 0.72) {
-    found = true;
-    reason = "fallback";
-  }
-  logTracker("recognize", {
-    found,
-    reason: found ? reason : "below-threshold",
-    bestScore: patternConfidence,
-    score: patternConfidence,
-    threshold: patternMin,
-    textConfidence,
-    dataConfidence,
-    markerConfidence,
-    combined,
-    source: pose.source
-  });
-  return found;
-}
-
-function getMinPatternConfidence(cardTarget, patternTarget) {
-  return cardTarget?.recognition?.minPatternConfidence ?? patternTarget?.minConfidence ?? MATCH_THRESHOLD;
-}
-
-function getMinPatternCandidateConfidence(cardTarget, patternTarget) {
-  const direct = cardTarget?.recognition?.minPatternCandidateConfidence;
-  if (Number.isFinite(direct)) return direct;
-  return getMinPatternConfidence(cardTarget, patternTarget) * 0.72;
+  if (markerConfidence >= 0.96 && textConfidence >= textMin * 0.72) return true;
+  if (markerConfidence >= cornerMin && (hasText || hasData) && combined >= combinedMin) return true;
+  return markerConfidence >= 0.72 && textConfidence >= textMin * 0.82 && dataConfidence >= dataMin * 0.72;
 }
 
 function point(x = 0, y = 0) {
@@ -618,13 +120,6 @@ function point(x = 0, y = 0) {
 
 function add(a, b) {
   return point(a.x + b.x, a.y + b.y);
-}
-
-function lerpPoint(a, b, t) {
-  return point(
-    a.x + (b.x - a.x) * t,
-    a.y + (b.y - a.y) * t
-  );
 }
 
 function sub(a, b) {
@@ -681,9 +176,7 @@ function geometryFromLocation(location, cardTarget) {
   const yAxisRaw = average([sub(bl, tl), sub(br, tr)]);
   const halfW = (length(sub(tr, tl)) + length(sub(br, bl))) * 0.25;
   const halfH = (length(sub(bl, tl)) + length(sub(br, tr))) * 0.25;
-  const geometry = makeGeometry(cardCenter, normalize(xAxisRaw), normalize(yAxisRaw), halfW, halfH, cardTarget);
-  geometry.location = location;
-  return geometry;
+  return makeGeometry(cardCenter, normalize(xAxisRaw), normalize(yAxisRaw), halfW, halfH, cardTarget);
 }
 
 function makeGeometry(cardCenter, xUnit, yUnit, halfW, halfH, cardTarget) {
@@ -795,42 +288,14 @@ function findDarkSquareCandidates(frame) {
       let maxGY = gy;
       let sumX = 0;
       let sumY = 0;
-      let cornerTL = null;
-      let cornerTR = null;
-      let cornerBR = null;
-      let cornerBL = null;
-      let cornerTLScore = Infinity;
-      let cornerTRScore = -Infinity;
-      let cornerBRScore = -Infinity;
-      let cornerBLScore = Infinity;
 
       while (stack.length) {
         const idx = stack.pop();
         const cx = idx % gridW;
         const cy = Math.floor(idx / gridW);
-        const px = (cx + 0.5) * step;
-        const py = (cy + 0.5) * step;
-        const sum = px + py;
-        const diff = px - py;
         count += 1;
         sumX += cx;
         sumY += cy;
-        if (sum < cornerTLScore) {
-          cornerTLScore = sum;
-          cornerTL = point(px, py);
-        }
-        if (diff > cornerTRScore) {
-          cornerTRScore = diff;
-          cornerTR = point(px, py);
-        }
-        if (sum > cornerBRScore) {
-          cornerBRScore = sum;
-          cornerBR = point(px, py);
-        }
-        if (diff < cornerBLScore) {
-          cornerBLScore = diff;
-          cornerBL = point(px, py);
-        }
         minGX = Math.min(minGX, cx);
         maxGX = Math.max(maxGX, cx);
         minGY = Math.min(minGY, cy);
@@ -892,15 +357,15 @@ function findBrightPanelCandidates(frame) {
       const x = Math.min(frame.width - 1, gx * step);
       const i = (y * frame.width + x) * 4;
       const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-      if (luminance > 148) bright[gy * gridW + gx] = 1;
+      if (luminance > 178) bright[gy * gridW + gx] = 1;
     }
   }
 
   const candidates = [];
   const stack = [];
   const minSide = Math.min(frame.width, frame.height);
-  const minPanelW = Math.max(30, minSide * 0.045);
-  const minPanelH = Math.max(26, minSide * 0.040);
+  const minPanelW = Math.max(54, minSide * 0.16);
+  const minPanelH = Math.max(44, minSide * 0.10);
   const maxPanelW = frame.width * 0.78;
   const maxPanelH = frame.height * 0.62;
 
@@ -918,42 +383,14 @@ function findBrightPanelCandidates(frame) {
       let maxGY = gy;
       let sumX = 0;
       let sumY = 0;
-      let cornerTL = null;
-      let cornerTR = null;
-      let cornerBR = null;
-      let cornerBL = null;
-      let cornerTLScore = Infinity;
-      let cornerTRScore = -Infinity;
-      let cornerBRScore = -Infinity;
-      let cornerBLScore = Infinity;
 
       while (stack.length) {
         const idx = stack.pop();
         const cx = idx % gridW;
         const cy = Math.floor(idx / gridW);
-        const px = (cx + 0.5) * step;
-        const py = (cy + 0.5) * step;
-        const sum = px + py;
-        const diff = px - py;
         count += 1;
         sumX += cx;
         sumY += cy;
-        if (sum < cornerTLScore) {
-          cornerTLScore = sum;
-          cornerTL = point(px, py);
-        }
-        if (diff > cornerTRScore) {
-          cornerTRScore = diff;
-          cornerTR = point(px, py);
-        }
-        if (sum > cornerBRScore) {
-          cornerBRScore = sum;
-          cornerBR = point(px, py);
-        }
-        if (diff < cornerBLScore) {
-          cornerBLScore = diff;
-          cornerBL = point(px, py);
-        }
         minGX = Math.min(minGX, cx);
         maxGX = Math.max(maxGX, cx);
         minGY = Math.min(minGY, cy);
@@ -977,7 +414,7 @@ function findBrightPanelCandidates(frame) {
       const height = (maxGY - minGY + 1) * step;
       if (width < minPanelW || height < minPanelH || width > maxPanelW || height > maxPanelH) continue;
       const fill = count / Math.max((maxGX - minGX + 1) * (maxGY - minGY + 1), 1);
-      if (fill < 0.22) continue;
+      if (fill < 0.38) continue;
       candidates.push({
         x: ((sumX / count) + 0.5) * step,
         y: ((sumY / count) + 0.5) * step,
@@ -998,130 +435,6 @@ function findBrightPanelCandidates(frame) {
   return candidates
     .sort((a, b) => (b.area * b.fill) - (a.area * a.fill))
     .slice(0, 12);
-}
-
-function findDarkFrameCandidates(frame) {
-  const step = Math.max(4, Math.round(Math.min(frame.width, frame.height) / 210));
-  const gridW = Math.ceil(frame.width / step);
-  const gridH = Math.ceil(frame.height / step);
-  const dark = new Uint8Array(gridW * gridH);
-  const seen = new Uint8Array(gridW * gridH);
-  const data = frame.imageData.data;
-
-  for (let gy = 0; gy < gridH; gy += 1) {
-    const y = Math.min(frame.height - 1, gy * step);
-    for (let gx = 0; gx < gridW; gx += 1) {
-      const x = Math.min(frame.width - 1, gx * step);
-      const i = (y * frame.width + x) * 4;
-      const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-      if (luminance < 88) dark[gy * gridW + gx] = 1;
-    }
-  }
-
-  const candidates = [];
-  const stack = [];
-  const minSide = Math.min(frame.width, frame.height);
-  const minFrameW = Math.max(70, minSide * 0.08);
-  const maxFrameW = frame.width * 0.94;
-  const maxFrameH = frame.height * 0.94;
-
-  for (let gy = 0; gy < gridH; gy += 1) {
-    for (let gx = 0; gx < gridW; gx += 1) {
-      const start = gy * gridW + gx;
-      if (!dark[start] || seen[start]) continue;
-      seen[start] = 1;
-      stack.length = 0;
-      stack.push(start);
-      let count = 0;
-      let minGX = gx;
-      let maxGX = gx;
-      let minGY = gy;
-      let maxGY = gy;
-      let sumX = 0;
-      let sumY = 0;
-      let cornerTL = null;
-      let cornerTR = null;
-      let cornerBR = null;
-      let cornerBL = null;
-      let cornerTLScore = Infinity;
-      let cornerTRScore = -Infinity;
-      let cornerBRScore = -Infinity;
-      let cornerBLScore = Infinity;
-
-      while (stack.length) {
-        const idx = stack.pop();
-        const cx = idx % gridW;
-        const cy = Math.floor(idx / gridW);
-        const px = (cx + 0.5) * step;
-        const py = (cy + 0.5) * step;
-        const sum = px + py;
-        const diff = px - py;
-        count += 1;
-        sumX += cx;
-        sumY += cy;
-        if (sum < cornerTLScore) {
-          cornerTLScore = sum;
-          cornerTL = point(px, py);
-        }
-        if (diff > cornerTRScore) {
-          cornerTRScore = diff;
-          cornerTR = point(px, py);
-        }
-        if (sum > cornerBRScore) {
-          cornerBRScore = sum;
-          cornerBR = point(px, py);
-        }
-        if (diff < cornerBLScore) {
-          cornerBLScore = diff;
-          cornerBL = point(px, py);
-        }
-        minGX = Math.min(minGX, cx);
-        maxGX = Math.max(maxGX, cx);
-        minGY = Math.min(minGY, cy);
-        maxGY = Math.max(maxGY, cy);
-
-        for (let oy = -1; oy <= 1; oy += 1) {
-          for (let ox = -1; ox <= 1; ox += 1) {
-            if (Math.abs(ox) + Math.abs(oy) !== 1) continue;
-            const nx = cx + ox;
-            const ny = cy + oy;
-            if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
-            const next = ny * gridW + nx;
-            if (!dark[next] || seen[next]) continue;
-            seen[next] = 1;
-            stack.push(next);
-          }
-        }
-      }
-
-      const width = (maxGX - minGX + 1) * step;
-      const height = (maxGY - minGY + 1) * step;
-      if (width < minFrameW || height < minFrameW || width > maxFrameW || height > maxFrameH) continue;
-      const aspect = width / Math.max(height, 1);
-      if (aspect < 0.70 || aspect > 1.35) continue;
-      const fill = count / Math.max((maxGX - minGX + 1) * (maxGY - minGY + 1), 1);
-      if (fill < 0.42 || fill > 0.94) continue;
-      const location = cornerTL && cornerTR && cornerBR && cornerBL ? {
-        topLeftCorner: cornerTL,
-        topRightCorner: cornerTR,
-        bottomRightCorner: cornerBR,
-        bottomLeftCorner: cornerBL
-      } : null;
-      candidates.push({
-        x: ((sumX / count) + 0.5) * step,
-        y: ((sumY / count) + 0.5) * step,
-        width,
-        height,
-        area: count * step * step,
-        fill,
-        location
-      });
-    }
-  }
-
-  return candidates
-    .sort((a, b) => (b.area * b.fill) - (a.area * a.fill))
-    .slice(0, 8);
 }
 
 function insetBounds(bounds, insetRatio) {
@@ -1344,7 +657,10 @@ function sampleCardRegionDarkRatio(pose, frame, region) {
     for (let col = 0; col < cols; col++) {
       const nx = region.x + ((col + 0.5) / cols) * region.w;
       const ny = region.y + ((row + 0.5) / rows) * region.h;
-      const p = mapCardRegionPoint(pose, nx, ny);
+      const p = add(
+        add(pose.center, mul(pose.xUnit, (nx - 0.5) * pose.halfW * 2)),
+        mul(pose.yUnit, (ny - 0.5) * pose.halfH * 2)
+      );
       const x = Math.round(p.x);
       const y = Math.round(p.y);
       if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
@@ -1355,86 +671,6 @@ function sampleCardRegionDarkRatio(pose, frame, region) {
     }
   }
   return total ? dark / total : 0;
-}
-
-function sampleCardRegionBrightRatio(pose, frame, region) {
-  const cols = region.cols || 20;
-  const rows = region.rows || 20;
-  let bright = 0;
-  let total = 0;
-  const data = frame.imageData.data;
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const nx = region.x + ((col + 0.5) / cols) * region.w;
-      const ny = region.y + ((row + 0.5) / rows) * region.h;
-      const p = mapCardRegionPoint(pose, nx, ny);
-      const x = Math.round(p.x);
-      const y = Math.round(p.y);
-      if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
-      const i = (y * frame.width + x) * 4;
-      const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-      if (luminance > 150) bright += 1;
-      total += 1;
-    }
-  }
-  return total ? bright / total : 0;
-}
-
-function samplePatternConfidence(pose, frame, patternTarget, cardTarget = null) {
-  if (!pose || !frame?.imageData?.data || !patternTarget?.orientations?.length) return 0;
-  const size = patternTarget.size || patternTarget.orientations[0]?.size || 16;
-  let bestScore = 0;
-  let bestRegion = getPatternSampleRegion(cardTarget);
-  const regions = getPatternSampleRegions(cardTarget);
-  for (const region of regions) {
-    const score = samplePatternRegionConfidence(pose, frame, patternTarget, size, region);
-    if (score > bestScore) {
-      bestScore = score;
-      bestRegion = region;
-    }
-  }
-  if (bestScore > 0.05) publishPatternDebug(pose, frame, cardTarget, bestRegion, bestScore);
-  return bestScore;
-}
-
-function samplePatternRegionConfidence(pose, frame, patternTarget, size, region) {
-  const actual = [];
-  const data = frame.imageData.data;
-  for (let row = 0; row < size; row += 1) {
-    for (let col = 0; col < size; col += 1) {
-      const nx = region.x + ((col + 0.5) / size) * region.w;
-      const ny = region.y + ((row + 0.5) / size) * region.h;
-      const p = mapCardRegionPoint(pose, nx, ny);
-      const x = Math.round(p.x);
-      const y = Math.round(p.y);
-      if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) {
-        actual.push(null);
-        continue;
-      }
-      const i = (y * frame.width + x) * 4;
-      actual.push((data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255);
-    }
-  }
-  let best = 0;
-  for (const orientation of patternTarget.orientations) {
-    if (!orientation?.values || orientation.values.length !== actual.length) continue;
-    let score = 0;
-    let total = 0;
-    for (let index = 0; index < actual.length; index += 1) {
-      const value = actual[index];
-      if (value == null) continue;
-      const expected = orientation.values[index];
-      const expectedBinary = expected < 0.50 ? 0 : 1;
-      const actualBinary = value < 0.50 ? 0 : 1;
-      const binaryScore = expectedBinary === actualBinary ? 1 : 0;
-      const tonalScore = 1 - Math.min(1, Math.abs(value - expected) * 1.45);
-      const expectedWeight = Math.abs(expected - 0.5) * 1.3 + 0.35;
-      score += (binaryScore * 0.72 + tonalScore * 0.28) * expectedWeight;
-      total += expectedWeight;
-    }
-    best = Math.max(best, total ? score / total : 0);
-  }
-  return clamp(best, 0, 1);
 }
 
 function refinePoseFromMarkers(base, markers, markerRatio, frame, cardTarget, source) {

@@ -1,1 +1,1 @@
-import "./runtime.js?v=20260528-pattern-1111-v3";
+import "./runtime.js?v=20260527-entry-gate-v1";
