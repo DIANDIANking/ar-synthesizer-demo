@@ -46,8 +46,8 @@ const MARKER_REFERENCE_DISTANCE = 6.1;
 const MARKER_MIN_DISTANCE = 2.35;
 const MARKER_MAX_DISTANCE = 12.5;
 const USER_SCALE_LIMITS = {
-  min: 0.55,
-  max: 1.85
+  min: 0.85,
+  max: 2.4
 };
 const ORIGINAL_GUITAR_PARAMS = {
   style: "folk",
