@@ -14,13 +14,16 @@ export function trackCardPoseFromFrame(previousPose, cardTarget, frame = null) {
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
   const glyphConfidence = samplePoseGlyphSignature(refined, cardTarget, frame);
+  const patternConfidence = samplePosePatternSignature(refined, cardTarget, frame);
   refined.glyphConfidence = glyphConfidence;
+  refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
   return {
     ...refined,
     textConfidence,
     dataConfidence,
     glyphConfidence,
+    patternConfidence,
     decodedPayload: cardTarget?.encodedPayload || ""
   };
 }
@@ -44,13 +47,16 @@ export function detectCardPoseFromFrame(cardTarget, frame = null) {
   const textConfidence = sampleTextSignature(refined, cardTarget, frame);
   const dataConfidence = sampleDataSignature(refined, cardTarget, frame);
   const glyphConfidence = samplePoseGlyphSignature(refined, cardTarget, frame);
+  const patternConfidence = samplePosePatternSignature(refined, cardTarget, frame);
   refined.glyphConfidence = glyphConfidence;
+  refined.patternConfidence = patternConfidence;
   if (!isRecognizedSynthCard(refined, textConfidence, dataConfidence, cardTarget)) return null;
   return {
     ...refined,
     textConfidence,
     dataConfidence,
     glyphConfidence,
+    patternConfidence,
     decodedPayload: cardTarget?.encodedPayload || ""
   };
 }
@@ -80,6 +86,7 @@ function detectHiroTextMarkerPose(cardTarget, frame) {
     const textConfidence = sampleTextSignature(base, cardTarget, frame);
     const dataConfidence = 1;
     const glyphConfidence = sampleGlyphSignatureFromBounds(frame, candidate.bounds, cardTarget?.glyphSignature);
+    const patternConfidence = samplePatternSignatureFromBounds(frame, candidate.bounds, cardTarget?.patternSignature);
     const wholeCardConfidence = clamp(
       whiteRatio * 0.32 + surroundDarkRatio * 0.42 + Math.min(1, textDarkRatio / 0.22) * 0.38,
       0,
@@ -93,6 +100,7 @@ function detectHiroTextMarkerPose(cardTarget, frame) {
       textConfidence,
       dataConfidence,
       glyphConfidence,
+      patternConfidence,
       usesWholeCardTarget: true,
       source: "hiro-text-marker",
       recognizedText: cardTarget?.recognizedText || cardTarget?.markerText?.[0] || "",
@@ -116,6 +124,10 @@ function isRecognizedSynthCard(pose, textConfidence, dataConfidence, cardTarget)
   const cornerMin = policy.minCornerConfidence ?? 0.44;
   const hasText = textConfidence >= textMin;
   const hasData = dataConfidence >= dataMin;
+  const patternMin = cardTarget?.patternSignature?.minConfidence ?? cardTarget?.patternMatch?.minConfidence;
+  if (patternMin != null && cardTarget?.patternSignature) {
+    if ((pose.patternConfidence ?? 0) < patternMin) return false;
+  }
   const glyphMin = cardTarget?.glyphSignature?.minConfidence;
   if (glyphMin != null && (pose.glyphConfidence ?? 0) < glyphMin) return false;
   const combined = markerConfidence * 0.48 + textConfidence * 0.34 + dataConfidence * 0.18;
@@ -521,6 +533,13 @@ function sampleGlyphSignatureFromBounds(frame, bounds, signature) {
   return total ? matched / total : 0;
 }
 
+function samplePatternSignatureFromBounds(frame, bounds, signature) {
+  const rotations = signature?.rotations || [];
+  if (!rotations.length || !bounds || !frame?.imageData?.data) return 1;
+  const sample = sampleRectPattern(frame, bounds);
+  return Math.max(...rotations.map((template) => comparePatternSample(sample, template)));
+}
+
 function samplePoseGlyphSignature(pose, cardTarget, frame) {
   const signature = cardTarget?.glyphSignature;
   const rows = signature?.rows || [];
@@ -554,6 +573,56 @@ function samplePoseGlyphSignature(pose, cardTarget, frame) {
     }
   }
   return total ? matched / total : 0;
+}
+
+function samplePosePatternSignature(pose, cardTarget, frame) {
+  const signature = cardTarget?.patternSignature;
+  const panel = cardTarget?.textPanel;
+  if (!signature?.rotations?.length || !panel || !pose || !frame?.imageData?.data) return 1;
+  const sample = [];
+  for (let row = 0; row < 16; row += 1) {
+    for (let col = 0; col < 16; col += 1) {
+      const nx = panel.x + ((col + 0.5) / 16) * panel.w;
+      const ny = panel.y + ((row + 0.5) / 16) * panel.h;
+      const p = point(
+        pose.center.x + pose.xUnit.x * (nx - 0.5) * pose.halfW * 2 + pose.yUnit.x * (ny - 0.5) * pose.halfH * 2,
+        pose.center.y + pose.xUnit.y * (nx - 0.5) * pose.halfW * 2 + pose.yUnit.y * (ny - 0.5) * pose.halfH * 2
+      );
+      sample.push(sampleFrameLuminance(frame, p.x, p.y));
+    }
+  }
+  return Math.max(...signature.rotations.map((template) => comparePatternSample(sample, template)));
+}
+
+function sampleRectPattern(frame, bounds) {
+  const sample = [];
+  for (let row = 0; row < 16; row += 1) {
+    for (let col = 0; col < 16; col += 1) {
+      const x = bounds.x + ((col + 0.5) / 16) * bounds.w;
+      const y = bounds.y + ((row + 0.5) / 16) * bounds.h;
+      sample.push(sampleFrameLuminance(frame, x, y));
+    }
+  }
+  return sample;
+}
+
+function sampleFrameLuminance(frame, x, y) {
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (px < 0 || py < 0 || px >= frame.width || py >= frame.height) return 255;
+  const i = (py * frame.width + px) * 4;
+  const data = frame.imageData.data;
+  return data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+}
+
+function comparePatternSample(sample, template) {
+  if (!sample?.length || !template?.length) return 0;
+  const length = Math.min(sample.length, template.length);
+  let error = 0;
+  for (let index = 0; index < length; index += 1) {
+    error += Math.abs(sample[index] - template[index]);
+  }
+  return clamp(1 - (error / length / 255), 0, 1);
 }
 
 function chooseExtremeCorners(candidates) {

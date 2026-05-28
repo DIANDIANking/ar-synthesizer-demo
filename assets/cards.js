@@ -2,7 +2,7 @@ export const DEFAULT_CARD_ID = "hechengqi";
 
 export const markerResourceMap = {
   hechengqi: {
-    markerUrl: "./assets/markers/pattern-hechengqi.patt",
+    markerUrl: "./assets/markers/synth.patt",
     markerImageUrl: "./assets/marker-card.png",
     instrumentType: "synthesizer",
     modelUrl: "runtime:synth-workstation",
@@ -11,7 +11,7 @@ export const markerResourceMap = {
     cardId: "hechengqi"
   },
   drum: {
-    markerUrl: "./assets/markers/pattern-drum.patt",
+    markerUrl: "./assets/markers/drum.patt",
     markerImageUrl: "./assets/markers/drum.png",
     instrumentType: "drum-machine",
     modelUrl: "runtime:drum-machine",
@@ -67,6 +67,9 @@ export const CARD_TARGETS = {
       anchorRegion: "textPanel",
       requireTextPanelOnly: true,
       decodedInstrument: "synthesizer"
+    },
+    patternMatch: {
+      minConfidence: 0.80
     },
     glyphSignature: {
       minConfidence: 0.68,
@@ -140,6 +143,9 @@ export const CARD_TARGETS = {
       anchorRegion: "textPanel",
       requireTextPanelOnly: true,
       decodedInstrument: "drum-machine"
+    },
+    patternMatch: {
+      minConfidence: 0.82
     },
     glyphSignature: {
       minConfidence: 0.68,

@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-card-switch-v2";
+import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-patt-binding-v2";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-card-switch-v2";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-patt-binding-v2";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -176,6 +176,7 @@ let activeVoices = new Map();
 let canvasBound = false;
 let drumControls = { ...DRUM_CONTROLS };
 let drumControlMeshes = new Map();
+let patternTargetsReady = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -270,6 +271,44 @@ function resetUserTransform() {
   };
   transformGesture = null;
   activeTouchPoints.clear();
+}
+
+function ensurePatternTargetsLoaded() {
+  if (patternTargetsReady) return patternTargetsReady;
+  patternTargetsReady = Promise.all(getAllCardTargets().map(async (target) => {
+    const url = target.markerResource?.markerUrl;
+    if (!url) return target;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Cannot load marker pattern: ${url}`);
+    const text = await response.text();
+    target.patternSignature = {
+      minConfidence: target.patternMatch?.minConfidence,
+      rotations: parsePattRotations(text)
+    };
+    return target;
+  })).catch((err) => {
+    patternTargetsReady = null;
+    throw err;
+  });
+  return patternTargetsReady;
+}
+
+function parsePattRotations(text) {
+  const values = String(text).trim().split(/\s+/).map(Number).filter(Number.isFinite);
+  if (values.length < 16 * 16 * 3) return [];
+  const rotations = [];
+  let index = 0;
+  for (let rotation = 0; rotation < 4 && index + 16 * 16 * 3 <= values.length; rotation += 1) {
+    const channels = [];
+    for (let channel = 0; channel < 3; channel += 1) {
+      channels.push(values.slice(index, index + 16 * 16));
+      index += 16 * 16;
+    }
+    rotations.push(channels[0].map((_, cell) => (
+      channels[0][cell] + channels[1][cell] + channels[2][cell]
+    ) / 3));
+  }
+  return rotations;
 }
 
 function showWelcome() {
@@ -1868,6 +1907,8 @@ async function startCameraMode() {
   cameraStarting = true;
   if (button) button.textContent = "正在打开相机";
   try {
+    setPrompt("正在加载乐器卡 pattern");
+    await ensurePatternTargetsLoaded();
     cameraStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
@@ -2007,9 +2048,9 @@ function detectAnyCardPoseFromFrame(frame) {
   for (const target of getAllCardTargets()) {
     const pose = detectCardPoseFromFrame(target, frame);
     if (!pose) continue;
-    const score = (pose.glyphConfidence || 0) * 0.72
-      + (pose.wholeCardConfidence || 0) * 0.20
-      + (pose.textConfidence || 0) * 0.08;
+    const score = (pose.patternConfidence || 0) * 0.86
+      + (pose.glyphConfidence || 0) * 0.08
+      + (pose.wholeCardConfidence || 0) * 0.06;
     if (!best || score > best.score) {
       best = {
         score,

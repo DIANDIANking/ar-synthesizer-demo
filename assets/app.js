@@ -1,1 +1,1 @@
-import "./runtime.js?v=20260529-card-switch-v2";
+import "./runtime.js?v=20260529-patt-binding-v2";
