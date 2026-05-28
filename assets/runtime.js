@@ -1,8 +1,8 @@
 import * as THREE from "./three.js";
-import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-drum-card-v1";
+import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-card-switch-v2";
 import { createEmptyAnchor } from "./anchor.js";
 import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-drum-card-v1";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-card-switch-v2";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -1984,13 +1984,7 @@ function scanTextCardMarker() {
   scanner.ctx.drawImage(video, 0, 0, width, height);
   const imageData = scanner.ctx.getImageData(0, 0, width, height);
   const frame = { imageData, width, height };
-  const detectedPose = detectAnyCardPoseFromFrame(frame);
-  const trackingPose = detectedPose?.cardId !== state.marker.cardId
-    ? null
-    : updateMarkerFromImageTracker(scale, frame);
-  const pose = detectedPose && detectedPose.cardId !== state.marker.cardId
-    ? detectedPose
-    : trackingPose || detectedPose;
+  const pose = detectAnyCardPoseFromFrame(frame);
   const cardId = pose?.cardId || REQUIRED_CARD_ID;
   const cardTarget = getCardTarget(cardId);
   const tracked = Boolean(pose && updateMarkerFromPose(pose, scale, {
@@ -2013,9 +2007,9 @@ function detectAnyCardPoseFromFrame(frame) {
   for (const target of getAllCardTargets()) {
     const pose = detectCardPoseFromFrame(target, frame);
     if (!pose) continue;
-    const score = (pose.wholeCardConfidence || 0) * 0.52
-      + (pose.textConfidence || 0) * 0.18
-      + (pose.glyphConfidence || 0) * 0.30;
+    const score = (pose.glyphConfidence || 0) * 0.72
+      + (pose.wholeCardConfidence || 0) * 0.20
+      + (pose.textConfidence || 0) * 0.08;
     if (!best || score > best.score) {
       best = {
         score,

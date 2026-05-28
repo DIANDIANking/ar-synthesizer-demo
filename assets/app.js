@@ -1,1 +1,1 @@
-import "./runtime.js?v=20260529-drum-card-v1";
+import "./runtime.js?v=20260529-card-switch-v2";
