@@ -59,9 +59,8 @@
     .start-button:disabled { opacity: 0.5; cursor: not-allowed; }
     .start-hint { margin-top: 24px; font-size: 0.8em; opacity: 0.65; max-width: 280px; line-height: 1.5; }
 
-    /* AR 场景 */
-    #ar-scene { display: none; position: fixed; inset: 0; z-index: 1; }
-    #ar-scene.active { display: block; }
+    /* AR 场景 — 始终渲染，overlay 覆盖其上 */
+    #ar-scene { position: fixed; inset: 0; z-index: 1; }
 
     /* HUD */
     .stage-hud { position: fixed; z-index: 10; top: 12px; left: 12px; display: flex; gap: 8px; flex-wrap: wrap; transition: opacity 0.18s; }
@@ -885,13 +884,15 @@
       var overlay = document.getElementById("start-overlay");
       if (overlay) overlay.classList.add("hidden");
 
-      var sceneEl = document.getElementById("ar-scene");
-      sceneEl.classList.add("active");
-      sceneEl.style.display = "block";
-
+      // Scene is already running — just init canvas events
       setPrompt("请将乐器识别卡放入画面中");
 
       if (!aframeCanvas) initScene();
+
+      // Force resize to ensure canvas has correct dimensions
+      var sceneEl = document.getElementById("ar-scene");
+      if (sceneEl && sceneEl.resize) { sceneEl.resize(); }
+      if (sceneEl && !sceneEl.isPlaying) { sceneEl.play(); }
     }
 
     // Expose globally
