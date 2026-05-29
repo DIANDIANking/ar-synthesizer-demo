@@ -8,11 +8,25 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>AR Mini Synth Workstation</title>
 
+  <!-- 保证子路径部署时相对路径正确（同 aoyuar） -->
+  <script>
+  (function () {
+    var path = location.pathname;
+    if (!path.endsWith('/')) {
+      if (/\.[^/.]+$/.test(path)) path = path.replace(/[^/]+$/, '');
+      else path += '/';
+    }
+    var base = document.createElement('base');
+    base.href = location.origin + path;
+    document.head.appendChild(base);
+  })();
+  </script>
+
   <!-- 框架：A-Frame + AR.js -->
-  <script src="./assets/aframe.min.js?v=2"></script>
-  <script src="./assets/aframe-ar.js?v=2"></script>
+  <script src="assets/aframe.min.js?v=3"></script>
+  <script src="assets/aframe-ar.js?v=3"></script>
   <!-- 音频引擎 -->
-  <script src="./assets/audio-engine.js?v=2"></script>
+  <script src="assets/audio-engine.js?v=3"></script>
 
   <style>
     body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
@@ -111,15 +125,15 @@
     embedded
     vr-mode-ui="enabled: false"
     renderer="logarithmicDepthBuffer: true; alpha: true;"
-    arjs="sourceType: webcam; debugUIEnabled: false; patternRatio: 0.5; labelingMode: black_region;">
+    arjs="sourceType: webcam; debugUIEnabled: false; patternRatio: 0.5;">
 
     <!-- 合成器标记 -->
-    <a-marker id="marker-synth" type="pattern" url="./assets/markers/synth.patt" size="0.15" synth-model>
+    <a-marker id="marker-synth" type="pattern" url="assets/markers/synth.patt" size="0.15" synth-model>
       <a-entity class="instrument-world" visible="false"></a-entity>
     </a-marker>
 
     <!-- 鼓机标记 -->
-    <a-marker id="marker-drum" type="pattern" url="./assets/markers/drum.patt" size="0.15" drum-model>
+    <a-marker id="marker-drum" type="pattern" url="assets/markers/drum.patt" size="0.15" drum-model>
       <a-entity class="instrument-world" visible="false"></a-entity>
     </a-marker>
 
@@ -890,6 +904,15 @@
       console.log("[AR] __audio available:", typeof window.__audio !== "undefined");
       setPrompt("请点击启动 AR 体验");
       updateDebug({});
+
+      // Verify .patt files are accessible
+      ["assets/markers/synth.patt", "assets/markers/drum.patt"].forEach(function (url) {
+        fetch(url).then(function (r) {
+          console.log("[AR] patt loaded:", url, r.ok ? "OK (" + r.status + ")" : "FAIL (" + r.status + ")");
+        }).catch(function (e) {
+          console.error("[AR] patt load error:", url, e);
+        });
+      });
     }
 
     if (document.readyState === "loading") {
