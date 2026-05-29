@@ -280,6 +280,30 @@ button {
   transform: translateX(-50%) translateY(-4px) scale(1.04);
 }
 
+.ar-debug-panel {
+  position: fixed;
+  z-index: 38;
+  right: calc(10px + env(safe-area-inset-right));
+  top: calc(10px + env(safe-area-inset-top));
+  width: min(360px, calc(100vw - 20px));
+  max-height: 46vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(99, 230, 190, 0.45);
+  border-radius: 8px;
+  color: #dcfff4;
+  background: rgba(2, 7, 9, 0.78);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.42;
+  pointer-events: none;
+}
+
+.ar-debug-panel b {
+  color: #f7c24d;
+}
+
 .ar-stage.mode-play .stage-prompt {
   opacity: 0;
   transform: translateX(-50%) translateY(10px) scale(0.96);

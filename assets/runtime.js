@@ -1,8 +1,8 @@
-import * as THREE from "./three.js";
-import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-patt-binding-v6";
-import { createEmptyAnchor } from "./anchor.js";
-import { hasCameraSupport, needsHttps } from "./camera.js";
-import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-patt-binding-v6";
+import * as THREE from "./three.js?v=20260529-two-stage-blue-v1";
+import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-two-stage-blue-v1";
+import { createEmptyAnchor } from "./anchor.js?v=20260529-two-stage-blue-v1";
+import { hasCameraSupport, needsHttps } from "./camera.js?v=20260529-two-stage-blue-v1";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-two-stage-blue-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -31,11 +31,14 @@ const FADERS = [
 const PERFORMANCE_BUTTONS = ["GLIDE", "ARP", "HOLD"];
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const WHITE_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);
+const BUILD_ID = "20260529-two-stage-blue-v1";
 const REQUIRED_CARD_ID = "hechengqi";
 const PROMPT_FIND_CARD = "请将乐器识别卡放入画面中";
 const MARKER_SCAN_INTERVAL = 0;
-const MARKER_LOST_TIMEOUT_MS = 300;
+const MARKER_LOST_TIMEOUT_MS = 500;
 const PATTERN_SWITCH_MARGIN = 0.035;
+const IDENTITY_STABLE_FRAMES = 3;
+const BLUE_IDENTITY_THRESHOLD = 0.03;
 const REQUIRED_IMAGE_TRACK_CORNERS = 4;
 const MIN_IMAGE_TRACK_CORNER_RATIO = 0.18;
 const MIN_IMAGE_TRACK_CONFIDENCE = 0.62;
@@ -71,7 +74,7 @@ const GUITAR_CONTROL_DEFAULTS = {
   cutoff: 0.62,
   fx: 0.22
 };
-const GUITE222_GUITAR_WORKLET_URL = new URL("./guitar-worklet.js?v=20260522-guite222-v1", import.meta.url);
+const GUITE222_GUITAR_WORKLET_URL = new URL(`./guitar-worklet.js?v=${BUILD_ID}`, import.meta.url);
 const GUITE222_GUITAR_PARAMS = {
   attack: 0.002,
   decay: 0.06,
@@ -92,6 +95,52 @@ const DRUM_CONTROLS = {
 
 const synthMarkerBinding = markerResourceMap.hechengqi;
 const drumMarkerBinding = markerResourceMap.drum;
+const GENERIC_MARKER_TARGET = {
+  id: "generic-marker",
+  instrumentId: "unknown",
+  title: "乐器卡",
+  markerText: ["乐器卡"],
+  recognizedText: "乐器卡",
+  resolvedInstrument: "unknown",
+  encodedPayload: "instrument=unknown;card=generic-marker",
+  cardAspect: 1,
+  qrCenterYOffset: 0,
+  cornerMarkerRatio: { x: 0.84, y: 0.855 },
+  textSignatureRegions: [
+    { x: 0.30, y: 0.30, w: 0.40, h: 0.40, minDarkRatio: 0.025 },
+    { x: 0.34, y: 0.34, w: 0.32, h: 0.32, minDarkRatio: 0.035 }
+  ],
+  textPanel: {
+    x: 0.30,
+    y: 0.30,
+    w: 0.40,
+    h: 0.40,
+    minWhiteRatio: 0.32,
+    minDarkSurroundRatio: 0.22,
+    minTextDarkRatio: 0.025
+  },
+  hiroMarker: {
+    enabled: true,
+    anchorRegion: "textPanel",
+    requireTextPanelOnly: false,
+    decodedInstrument: "unknown"
+  },
+  recognition: {
+    minTextConfidence: 0.025,
+    minDataConfidence: 0.0,
+    minCombinedConfidence: 0.16,
+    minCornerConfidence: 0.16,
+    strictDataSignature: false
+  },
+  anchor: {
+    anchorMode: "card-center",
+    liftPortrait: 1.10,
+    liftLandscape: 0.74,
+    modelScale: 1.0,
+    yOffset: 0.08,
+    zOffset: 0.10
+  }
+};
 window.markerResourceMap = markerResourceMap;
 window.activeInstrument = null;
 
@@ -179,6 +228,22 @@ let canvasBound = false;
 let drumControls = { ...DRUM_CONTROLS };
 let drumControlMeshes = new Map();
 let patternTargetsReady = null;
+let identityCandidate = null;
+let identityCandidateFrames = 0;
+let stableIdentity = null;
+const arDebugState = {
+  BUILD_ID,
+  markerFound: false,
+  poseFound: false,
+  pattWinner: "none",
+  blueRatio: "0.0000",
+  classifiedIdentity: "none",
+  finalIdentity: "none",
+  shownModel: "none",
+  "drumModel.visible": false,
+  "synthModel.visible": false,
+  poseUpdated: false
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -262,7 +327,11 @@ function setSynthActive(active) {
 }
 
 function setActiveInstrumentModel(instrumentType) {
-  activeModelGroup = instrumentType === "drum-machine" ? drumGroup : synthGroup;
+  activeModelGroup = instrumentType === "drum-machine"
+    ? drumGroup
+    : instrumentType === "synthesizer"
+      ? synthGroup
+      : null;
   if (synthGroup) synthGroup.visible = false;
   if (drumGroup) drumGroup.visible = false;
 }
@@ -280,7 +349,7 @@ function ensurePatternTargetsLoaded() {
   patternTargetsReady = Promise.all(getAllCardTargets().map(async (target) => {
     const url = target.markerResource?.markerUrl;
     if (!url) return target;
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetch(withBuildVersion(url), { cache: "no-store" });
     if (!response.ok) throw new Error(`Cannot load marker pattern: ${url}`);
     const text = await response.text();
     const rotations = parsePattRotations(text);
@@ -302,6 +371,12 @@ function ensurePatternTargetsLoaded() {
     throw err;
   });
   return patternTargetsReady;
+}
+
+function withBuildVersion(url) {
+  const resolved = new URL(url, window.location.href);
+  resolved.searchParams.set("v", BUILD_ID);
+  return resolved.href;
 }
 
 function parsePattRotations(text) {
@@ -600,6 +675,10 @@ function activateInstrumentMarker(details = {}) {
   }
   setActiveInstrumentModel(config.instrumentType);
   if (!alreadyActive) window.activeInstrument.initAudioEngine?.();
+  updateArDebug({
+    finalIdentity: config.cardId === "drum" ? "drum" : "synth",
+    shownModel: config.cardId === "drum" ? "drum" : "synth"
+  });
 }
 
 function deactivateInstrumentMarker() {
@@ -611,6 +690,12 @@ function deactivateInstrumentMarker() {
   }
   setActiveInstrumentModel(null);
   document.body.classList.remove("synthesizer-active");
+  updateArDebug({
+    finalIdentity: stableIdentity || "none",
+    shownModel: "none",
+    "drumModel.visible": false,
+    "synthModel.visible": false
+  });
 }
 
 function releaseVoice(voice, options = {}) {
@@ -2027,10 +2112,26 @@ function scanTextCardMarker() {
   const video = $("#camera-feed");
   const scanner = getScanner();
   if (!video || !scanner) {
+    updateArDebug({
+      markerFound: false,
+      poseFound: false,
+      poseUpdated: false,
+      pattWinner: "none",
+      classifiedIdentity: "none",
+      finalIdentity: stableIdentity || "none"
+    });
     hideMarker(PROMPT_FIND_CARD);
     return false;
   }
   if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    updateArDebug({
+      markerFound: false,
+      poseFound: false,
+      poseUpdated: false,
+      pattWinner: "none",
+      classifiedIdentity: "none",
+      finalIdentity: stableIdentity || "none"
+    });
     hideMarker(PROMPT_FIND_CARD);
     return false;
   }
@@ -2045,17 +2146,41 @@ function scanTextCardMarker() {
   const imageData = scanner.ctx.getImageData(0, 0, width, height);
   const frame = { imageData, width, height };
   const pose = detectAnyCardPoseFromFrame(frame);
-  const cardId = pose?.cardId || REQUIRED_CARD_ID;
-  const cardTarget = getCardTarget(cardId);
+  const markerFound = Boolean(pose);
+  const classification = markerFound
+    ? classifyCardFromVideoFrame(frame, pose)
+    : { blueRatio: 0, identity: null };
+  const stable = markerFound ? resolveStableIdentity(classification.identity) : null;
+  const finalIdentity = stable;
+  const cardId = finalIdentity === "drum" ? "drum" : finalIdentity === "synth" ? "hechengqi" : null;
+  const cardTarget = cardId ? getCardTarget(cardId) : null;
+  updateArDebug({
+    markerFound,
+    poseFound: markerFound,
+    pattWinner: pose?.pattWinner || pose?.cardId || "none",
+    blueRatio: classification.blueRatio.toFixed(4),
+    classifiedIdentity: classification.identity || "none",
+    finalIdentity: finalIdentity || "none",
+    poseUpdated: false
+  });
+  if (!markerFound) {
+    resetIdentityCandidate(false);
+    return handleMarkerMiss(PROMPT_FIND_CARD);
+  }
+  if (!cardTarget || !finalIdentity) {
+    setPrompt(`正在稳定识别乐器 ${identityCandidateFrames}/${IDENTITY_STABLE_FRAMES}`);
+    return handleMarkerMiss("正在稳定识别乐器卡");
+  }
   const tracked = Boolean(pose && updateMarkerFromPose(pose, scale, {
-    payload: pose.decodedPayload || cardTarget.encodedPayload || "instrument=synth",
+    payload: cardTarget.encodedPayload || (finalIdentity === "drum" ? "instrument=drum-machine" : "instrument=synthesizer"),
     cardId,
-    instrumentType: pose.resolvedInstrument || cardTarget.resolvedInstrument || cardTarget.markerResource?.instrumentType || cardTarget.instrumentId || "synthesizer",
-    recognizedText: pose.recognizedText || cardTarget.recognizedText || cardTarget.title || "",
+    instrumentType: cardTarget.markerResource?.instrumentType || cardTarget.resolvedInstrument || cardTarget.instrumentId || "synthesizer",
+    recognizedText: cardTarget.recognizedText || cardTarget.title || "",
     markerResource: cardTarget.markerResource || synthMarkerBinding,
-    source: pose.source || "text-card",
+    source: `${pose.source || "marker"}+blue-classifier`,
     immediate: true
   }));
+  updateArDebug({ poseUpdated: tracked });
   if (!tracked) return handleMarkerMiss(PROMPT_FIND_CARD);
   return tracked;
 }
@@ -2086,19 +2211,117 @@ function detectAnyCardPoseFromFrame(frame) {
       }
     });
   }
+  const genericPose = detectCardPoseFromFrame(GENERIC_MARKER_TARGET, frame);
+  if (genericPose) {
+    hits.push({
+      score: genericPose.wholeCardConfidence || genericPose.textConfidence || 0.2,
+      pose: {
+        ...genericPose,
+        cardId: "generic-marker",
+        resolvedInstrument: "unknown",
+        recognizedText: "乐器卡",
+        decodedPayload: "instrument=unknown;card=generic-marker"
+      }
+    });
+  }
   if (!hits.length) return null;
   hits.sort((a, b) => b.score - a.score);
   const [best, runnerUp] = hits;
+  best.pose.pattWinner = best.pose.cardId;
+  best.pose.patternScores = hits.map((hit) => ({
+    id: hit.pose.cardId,
+    score: hit.score
+  }));
   if (runnerUp && best.score - runnerUp.score < PATTERN_SWITCH_MARGIN) {
-    console.warn("[AR pattern] ambiguous match ignored", {
+    console.warn("[AR pattern] ambiguous pose kept for anchor only", {
       best: best.pose.cardId,
       bestScore: best.score,
       runnerUp: runnerUp.pose.cardId,
       runnerUpScore: runnerUp.score
     });
-    return null;
   }
   return best.pose;
+}
+
+function classifyCardFromVideoFrame(frame, pose = null) {
+  const blueRatio = pose?.center && pose?.xUnit && pose?.yUnit
+    ? samplePoseBlueRatio(frame, pose, { x: 0.24, y: 0.24, w: 0.52, h: 0.52, cols: 54, rows: 54 })
+    : sampleFrameCenterBlueRatio(frame);
+  return {
+    blueRatio,
+    identity: blueRatio > BLUE_IDENTITY_THRESHOLD ? "drum" : "synth"
+  };
+}
+
+function samplePoseBlueRatio(frame, pose, region) {
+  if (!frame?.imageData?.data || !pose?.center) return 0;
+  const cols = region.cols || 48;
+  const rows = region.rows || 48;
+  const data = frame.imageData.data;
+  let blue = 0;
+  let total = 0;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const nx = region.x + ((col + 0.5) / cols) * region.w;
+      const ny = region.y + ((row + 0.5) / rows) * region.h;
+      const p = {
+        x: pose.center.x + pose.xUnit.x * (nx - 0.5) * pose.halfW * 2 + pose.yUnit.x * (ny - 0.5) * pose.halfH * 2,
+        y: pose.center.y + pose.xUnit.y * (nx - 0.5) * pose.halfW * 2 + pose.yUnit.y * (ny - 0.5) * pose.halfH * 2
+      };
+      const x = Math.round(p.x);
+      const y = Math.round(p.y);
+      if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
+      const i = (y * frame.width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (b > 100 && b > r * 1.3 && b > g * 1.1) blue += 1;
+      total += 1;
+    }
+  }
+  return total ? blue / total : 0;
+}
+
+function sampleFrameCenterBlueRatio(frame) {
+  if (!frame?.imageData?.data) return 0;
+  const data = frame.imageData.data;
+  const minX = Math.floor(frame.width * 0.30);
+  const maxX = Math.ceil(frame.width * 0.70);
+  const minY = Math.floor(frame.height * 0.30);
+  const maxY = Math.ceil(frame.height * 0.70);
+  let blue = 0;
+  let total = 0;
+  for (let y = minY; y < maxY; y += 2) {
+    for (let x = minX; x < maxX; x += 2) {
+      const i = (y * frame.width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (b > 100 && b > r * 1.3 && b > g * 1.1) blue += 1;
+      total += 1;
+    }
+  }
+  return total ? blue / total : 0;
+}
+
+function resolveStableIdentity(identity) {
+  if (!identity) return stableIdentity;
+  if (identity !== identityCandidate) {
+    identityCandidate = identity;
+    identityCandidateFrames = 1;
+  } else {
+    identityCandidateFrames += 1;
+  }
+  if (identityCandidateFrames >= IDENTITY_STABLE_FRAMES) {
+    stableIdentity = identity;
+  }
+  return stableIdentity;
+}
+
+function resetIdentityCandidate(clearStable = true) {
+  identityCandidate = null;
+  identityCandidateFrames = 0;
+  if (clearStable) stableIdentity = null;
 }
 
 function mapVideoPointToStage(point, scanScale) {
@@ -2283,6 +2506,22 @@ function updateMarkerFromPose(pose, scanScale, details) {
   return true;
 }
 
+function updateArDebug(partial = {}) {
+  Object.assign(arDebugState, partial);
+  arDebugState.shownModel = drumGroup?.visible && activeModelGroup === drumGroup
+    ? "drum"
+    : synthGroup?.visible && activeModelGroup === synthGroup
+      ? "synth"
+      : "none";
+  arDebugState["drumModel.visible"] = Boolean(drumGroup?.visible);
+  arDebugState["synthModel.visible"] = Boolean(synthGroup?.visible);
+  const panel = $("#ar-debug-panel");
+  if (!panel) return;
+  panel.innerHTML = Object.entries(arDebugState)
+    .map(([key, value]) => `<div><b>${key}</b>: ${String(value)}</div>`)
+    .join("");
+}
+
 function isMarkerVisible() {
   return state.marker.locked;
 }
@@ -2310,12 +2549,24 @@ function hideMarker(promptText) {
   foundFrameCount = 0;
   lastCandidateAt = 0;
   lastCardPoseScan = null;
+  resetIdentityCandidate(true);
   cancelActiveControlPointers();
   muteOutputForMarkerLoss();
   deactivateInstrumentMarker();
   if (synthGroup) synthGroup.visible = false;
   if (drumGroup) drumGroup.visible = false;
   setSynthActive(false);
+  updateArDebug({
+    markerFound: false,
+    poseFound: false,
+    pattWinner: "none",
+    classifiedIdentity: "none",
+    finalIdentity: "none",
+    shownModel: "none",
+    poseUpdated: false,
+    "drumModel.visible": false,
+    "synthModel.visible": false
+  });
   if (promptText) setPrompt(promptText);
 }
 
@@ -2387,6 +2638,15 @@ function render(time = 0) {
     const visible = isMarkerVisible();
     if (synthGroup) synthGroup.visible = visible && activeModelGroup === synthGroup;
     if (drumGroup) drumGroup.visible = visible && activeModelGroup === drumGroup;
+    updateArDebug({
+      shownModel: visible && activeModelGroup === drumGroup
+        ? "drum"
+        : visible && activeModelGroup === synthGroup
+          ? "synth"
+          : "none",
+      "drumModel.visible": Boolean(drumGroup?.visible),
+      "synthModel.visible": Boolean(synthGroup?.visible)
+    });
     if (!visible) {
       renderer.render(scene, camera);
       requestAnimationFrame(render);
@@ -2436,6 +2696,7 @@ function bindEvents() {
 }
 
 function init() {
+  unregisterServiceWorkers();
   bindEvents();
   createScene();
   selectPreset("SYNTH");
@@ -2443,6 +2704,14 @@ function init() {
   setStageWaiting(true);
   setPrompt("请允许相机");
   showWelcome();
+  updateArDebug();
+}
+
+function unregisterServiceWorkers() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.getRegistrations()
+    .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+    .catch(() => {});
 }
 
 if (document.readyState === "loading") {
