@@ -1,8 +1,8 @@
-import * as THREE from "./three.js?v=20260529-classify-card-v1";
-import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-classify-card-v1";
-import { createEmptyAnchor } from "./anchor.js?v=20260529-classify-card-v1";
-import { hasCameraSupport, needsHttps } from "./camera.js?v=20260529-classify-card-v1";
-import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-classify-card-v1";
+import * as THREE from "./three.js?v=20260529-pose-matrix-v1";
+import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-pose-matrix-v1";
+import { createEmptyAnchor } from "./anchor.js?v=20260529-pose-matrix-v1";
+import { hasCameraSupport, needsHttps } from "./camera.js?v=20260529-pose-matrix-v1";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-pose-matrix-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -31,11 +31,11 @@ const FADERS = [
 const PERFORMANCE_BUTTONS = ["GLIDE", "ARP", "HOLD"];
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const WHITE_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);
-const BUILD_ID = "20260529-classify-card-v1";
+const BUILD_ID = "20260529-pose-matrix-v1";
 const REQUIRED_CARD_ID = "hechengqi";
 const PROMPT_FIND_CARD = "请将乐器识别卡放入画面中";
 const MARKER_SCAN_INTERVAL = 0;
-const MARKER_LOST_TIMEOUT_MS = 300;
+const MARKER_LOST_TIMEOUT_MS = 500;
 const PATTERN_SWITCH_MARGIN = 0.035;
 const BLUE_CARD_THRESHOLD = 0.03;
 const REQUIRED_IMAGE_TRACK_CORNERS = 4;
@@ -116,6 +116,7 @@ const state = {
     cardId: REQUIRED_CARD_ID,
     instrumentType: null,
     lastSeenAt: 0,
+    poseMatrix: null,
     centerX: 0.5,
     centerY: 0.52,
     size: 0.24,
@@ -1261,11 +1262,13 @@ function createScene() {
 
   synthGroup = new THREE.Group();
   synthGroup.name = "AR_Mini_Synth_Workstation";
+  synthGroup.matrixAutoUpdate = false;
   synthGroup.visible = false;
   scene.add(synthGroup);
   buildSynthModel();
   drumGroup = new THREE.Group();
   drumGroup.name = "QR_Drum_Machine";
+  drumGroup.matrixAutoUpdate = false;
   drumGroup.visible = false;
   scene.add(drumGroup);
   buildDrumMachineModel();
@@ -2393,6 +2396,18 @@ function updateMarkerFromPose(pose, scanScale, details) {
       };
 
   const projectedSize = ((topW + bottomW + leftH + rightH) * 0.25) / minSide;
+  const angle = Math.atan2(tr.py - tl.py, tr.px - tl.px);
+  const tiltX = clamp((rightH - leftH) / Math.max(leftH + rightH, 1), -0.38, 0.38);
+  const tiltY = clamp((bottomW - topW) / Math.max(topW + bottomW, 1), -0.38, 0.38);
+  const poseMatrix = composeMarkerPoseMatrix({
+    cardId: details.cardId,
+    centerX: center.x,
+    centerY: center.y,
+    size: Math.max(0.001, projectedSize),
+    angle,
+    tiltX,
+    tiltY
+  });
   state.marker = {
     locked: true,
     payload: details.payload,
@@ -2400,12 +2415,13 @@ function updateMarkerFromPose(pose, scanScale, details) {
     instrumentType: details.instrumentType || "synthesizer",
     recognizedText: details.recognizedText || "",
     lastSeenAt: now,
+    poseMatrix,
     centerX: center.x,
     centerY: center.y,
     size: Math.max(0.001, projectedSize),
-    angle: Math.atan2(tr.py - tl.py, tr.px - tl.px),
-    tiltX: clamp((rightH - leftH) / Math.max(leftH + rightH, 1), -0.38, 0.38),
-    tiltY: clamp((bottomW - topW) / Math.max(topW + bottomW, 1), -0.38, 0.38)
+    angle,
+    tiltX,
+    tiltY
   };
   lastCardPoseScan = pose;
   activateInstrumentMarker(details);
@@ -2495,9 +2511,25 @@ function markerTargetForView() {
   };
 }
 
-function markerZFromCardSize(defaultZ = 0.10) {
+function composeMarkerPoseMatrix(marker) {
+  const card = getCardTarget(marker.cardId);
+  const cardAnchor = card.anchor || {};
+  const z = markerZFromCardSize(cardAnchor.zOffset ?? 0.10, marker.size);
+  const position2d = screenPointToWorldAtZ(marker.centerX, marker.centerY, z);
+  const position = new THREE.Vector3(position2d.x, position2d.y, z);
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    -0.35 + marker.tiltY * 0.42,
+    marker.tiltX * 0.42,
+    marker.angle,
+    "XYZ"
+  ));
+  const scale = FIXED_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1);
+  return new THREE.Matrix4().compose(position, quaternion, new THREE.Vector3(scale, scale, scale));
+}
+
+function markerZFromCardSize(defaultZ = 0.10, markerSize = state.marker.size) {
   if (!camera) return defaultZ;
-  const size = Math.max(0.001, state.marker.size || MARKER_REFERENCE_SIZE);
+  const size = Math.max(0.001, markerSize || MARKER_REFERENCE_SIZE);
   const distance = clamp(
     MARKER_REFERENCE_DISTANCE * (MARKER_REFERENCE_SIZE / size),
     MARKER_MIN_DISTANCE,
@@ -2531,8 +2563,7 @@ function updateAnchor(portrait) {
     anchor.confidence = 0;
     return;
   }
-  const target = markerTargetForView();
-  Object.assign(anchor, target);
+  anchor.poseMatrix = state.marker.poseMatrix || composeMarkerPoseMatrix(state.marker);
   anchor.confidence = 1;
 }
 
@@ -2561,11 +2592,12 @@ function render(time = 0) {
       requestAnimationFrame(render);
       return;
     }
-    activeModelGroup.position.set(anchor.x, anchor.y, anchor.z);
-    activeModelGroup.scale.setScalar(anchor.scale);
-    activeModelGroup.rotation.x = -0.35 + anchor.tiltY * 0.42;
-    activeModelGroup.rotation.y = anchor.tiltX * 0.42;
-    activeModelGroup.rotation.z = anchor.angle;
+    if (anchor.poseMatrix) {
+      activeModelGroup.matrix.copy(anchor.poseMatrix);
+      activeModelGroup.matrixAutoUpdate = false;
+      activeModelGroup.matrixWorldNeedsUpdate = true;
+      activeModelGroup.updateMatrixWorld(true);
+    }
   }
 
   renderer.render(scene, camera);
