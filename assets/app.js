@@ -1,1 +1,1 @@
-import "./runtime.js?v=20260529-card-pose-v1";
+import "./runtime.js?v=20260529-no-access-v1";

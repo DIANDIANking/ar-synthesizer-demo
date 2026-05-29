@@ -7,18 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>AR Mini Synth Workstation</title>
-  <link rel="stylesheet" href="./assets/style.css?v=20260529-card-pose-v1">
-  <script>
-    (() => {
-      const local = ["localhost", "127.0.0.1"].includes(location.hostname);
-      const params = new URLSearchParams(location.search);
-      const key = "arSynthAccessGranted";
-      if (params.get("access") === "granted") sessionStorage.setItem(key, "yes");
-      if (!local && sessionStorage.getItem(key) !== "yes") {
-        location.replace("./access.html");
-      }
-    })();
-  </script>
+  <link rel="stylesheet" href="./assets/style.css?v=20260529-no-access-v1">
 </head>
 <body>
   <section class="welcome-screen" id="welcome-screen" aria-label="平台欢迎页">
@@ -44,6 +33,6 @@
   </main>
   <section class="ar-debug-panel" id="ar-debug-panel" aria-label="AR 调试信息"></section>
 
-  <script type="module" src="./assets/app.js?v=20260529-card-pose-v1"></script>
+  <script type="module" src="./assets/app.js?v=20260529-no-access-v1"></script>
 </body>
 </html>
