@@ -362,11 +362,11 @@ function setPrompt(text) {
 }
 
 function setStageWaiting(waiting) {
-  $("#ar-stage")?.classList.toggle("awaiting-camera", waiting);
+  // A-Frame handles camera readiness internally
 }
 
 function setSynthActive(active) {
-  $("#ar-stage")?.classList.toggle("mode-play", active);
+  document.body.classList.toggle("mode-play", active);
 }
 
 function resetUserTransform() {
@@ -381,13 +381,11 @@ function resetUserTransform() {
 // Welcome screen / UI
 // ============================================================
 function showWelcome() {
-  document.body.classList.add("welcome-active");
-  $("#welcome-screen")?.classList.remove("hidden");
+  $("#welcome-overlay")?.classList.remove("hidden");
 }
 
 function hideWelcome() {
-  document.body.classList.remove("welcome-active");
-  $("#welcome-screen")?.classList.add("hidden");
+  $("#welcome-overlay")?.classList.add("hidden");
 }
 
 // ============================================================
@@ -1977,15 +1975,7 @@ function bindCanvasEvents(canvas) {
 }
 
 function resizeCanvas() {
-  if (!renderer || !camera) return;
-  const stage = $("#ar-stage");
-  if (!stage) return;
-  const rect = stage.getBoundingClientRect();
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height));
-  renderer.setSize(width, height, false);
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
+  // A-Frame manages renderer and camera sizing automatically
 }
 
 // ============================================================
