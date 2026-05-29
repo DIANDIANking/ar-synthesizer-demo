@@ -1,8 +1,8 @@
-import * as THREE from "./three.js?v=20260529-drum222-v1";
-import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-drum222-v1";
-import { createEmptyAnchor } from "./anchor.js?v=20260529-drum222-v1";
-import { hasCameraSupport, needsHttps } from "./camera.js?v=20260529-drum222-v1";
-import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-drum222-v1";
+import * as THREE from "./three.js?v=20260529-card-pose-v1";
+import { getAllCardTargets, getCardTarget, markerResourceMap } from "./cards.js?v=20260529-card-pose-v1";
+import { createEmptyAnchor } from "./anchor.js?v=20260529-card-pose-v1";
+import { hasCameraSupport, needsHttps } from "./camera.js?v=20260529-card-pose-v1";
+import { detectCardPoseFromFrame, trackCardPoseFromFrame } from "./tracker.js?v=20260529-card-pose-v1";
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -31,7 +31,7 @@ const FADERS = [
 const PERFORMANCE_BUTTONS = ["GLIDE", "ARP", "HOLD"];
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const WHITE_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);
-const BUILD_ID = "20260529-drum222-v1";
+const BUILD_ID = "20260529-card-pose-v1";
 const REQUIRED_CARD_ID = "hechengqi";
 const PROMPT_FIND_CARD = "请将乐器识别卡放入画面中";
 const MARKER_SCAN_INTERVAL = 0;
@@ -2399,8 +2399,12 @@ function updateMarkerFromPose(pose, scanScale, details) {
   const angle = Math.atan2(tr.py - tl.py, tr.px - tl.px);
   const tiltX = clamp((rightH - leftH) / Math.max(leftH + rightH, 1), -0.38, 0.38);
   const tiltY = clamp((bottomW - topW) / Math.max(topW + bottomW, 1), -0.38, 0.38);
-  const poseMatrix = composeMarkerPoseMatrix({
+  const poseMatrix = composeMarkerPoseMatrixFromCorners({
     cardId: details.cardId,
+    tl,
+    tr,
+    br,
+    bl,
     centerX: center.x,
     centerY: center.y,
     size: Math.max(0.001, projectedSize),
@@ -2525,6 +2529,41 @@ function composeMarkerPoseMatrix(marker) {
   ));
   const scale = FIXED_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1);
   return new THREE.Matrix4().compose(position, quaternion, new THREE.Vector3(scale, scale, scale));
+}
+
+function composeMarkerPoseMatrixFromCorners(marker) {
+  const card = getCardTarget(marker.cardId);
+  const cardAnchor = card.anchor || {};
+  const z = markerZFromCardSize(cardAnchor.zOffset ?? 0.10, marker.size);
+  const worldTl = stagePointToWorldAtZ(marker.tl, z);
+  const worldTr = stagePointToWorldAtZ(marker.tr, z);
+  const worldBr = stagePointToWorldAtZ(marker.br, z);
+  const worldBl = stagePointToWorldAtZ(marker.bl, z);
+  const leftMid = new THREE.Vector3().addVectors(worldTl, worldBl).multiplyScalar(0.5);
+  const rightMid = new THREE.Vector3().addVectors(worldTr, worldBr).multiplyScalar(0.5);
+  const topMid = new THREE.Vector3().addVectors(worldTl, worldTr).multiplyScalar(0.5);
+  const bottomMid = new THREE.Vector3().addVectors(worldBl, worldBr).multiplyScalar(0.5);
+  const position = new THREE.Vector3()
+    .addVectors(leftMid, rightMid)
+    .multiplyScalar(0.5);
+  const xAxis = new THREE.Vector3().subVectors(rightMid, leftMid);
+  const yAxis = new THREE.Vector3().subVectors(bottomMid, topMid);
+  const angle = Math.atan2(xAxis.y, xAxis.x);
+  const tiltX = clamp((worldBr.distanceTo(worldTr) - worldBl.distanceTo(worldTl)) / Math.max(worldBr.distanceTo(worldTr) + worldBl.distanceTo(worldTl), 0.001), -0.5, 0.5);
+  const tiltY = clamp((worldBr.distanceTo(worldBl) - worldTr.distanceTo(worldTl)) / Math.max(worldBr.distanceTo(worldBl) + worldTr.distanceTo(worldTl), 0.001), -0.5, 0.5);
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    -0.35 + tiltY * 0.85,
+    tiltX * 0.85,
+    angle,
+    "XYZ"
+  ));
+  const scale = FIXED_SYNTH_SCALE * userTransform.scale * (cardAnchor.modelScale || 1);
+  return new THREE.Matrix4().compose(position, quaternion, new THREE.Vector3(scale, scale, scale));
+}
+
+function stagePointToWorldAtZ(point, z) {
+  const mapped = screenPointToWorldAtZ(point.x, point.y, z);
+  return new THREE.Vector3(mapped.x, mapped.y, z);
 }
 
 function markerZFromCardSize(defaultZ = 0.10, markerSize = state.marker.size) {
