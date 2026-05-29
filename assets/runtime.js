@@ -162,47 +162,59 @@ window.__arModelScale = () => FIXED_SYNTH_SCALE * (userTransform?.scale || 1);
 // A-Frame component: instrument-marker
 // Bridges AR.js marker events to the existing THREE.js code
 // ============================================================
-AFRAME.registerComponent("instrument-marker", {
-  schema: {
-    instrument: { type: "string", default: "synth" }
-  },
-  init: function () {
-    this.modelGroup = null;
-    this.isMarkerFound = false;
-    this.cardId = this.data.instrument === "drum" ? "drum" : "hechengqi";
-    this.markerResource = this.data.instrument === "drum" ? drumMarkerBinding : synthMarkerBinding;
-
-    this.el.addEventListener("markerFound", () => this.onFound());
-    this.el.addEventListener("markerLost", () => this.onLost());
-  },
-  onFound: function () {
-    this.isMarkerFound = true;
-    onMarkerFound(this.cardId, this.markerResource);
-  },
-  onLost: function () {
-    this.isMarkerFound = false;
-    onMarkerLost();
-  },
-  tick: function () {
-    if (!this.isMarkerFound || !this.modelGroup) return;
-    this.el.object3D.updateMatrixWorld();
-    const m = this.el.object3D.matrixWorld;
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scl = new THREE.Vector3();
-    m.decompose(pos, quat, scl);
-
-    // Apply model scale from global config + user pinch gesture
-    const modelScale = window.__arModelScale ? window.__arModelScale() : FIXED_SYNTH_SCALE;
-    this.modelGroup.matrix.compose(
-      pos,
-      quat,
-      new THREE.Vector3(modelScale, modelScale, modelScale)
-    );
-    this.modelGroup.matrixAutoUpdate = false;
-    this.modelGroup.matrixWorldNeedsUpdate = true;
+function registerInstrumentMarkerComponent() {
+  if (typeof AFRAME === "undefined") {
+    console.warn("[AR] AFRAME not ready, retrying...");
+    setTimeout(registerInstrumentMarkerComponent, 200);
+    return;
   }
-});
+  if (AFRAME.components["instrument-marker"]) return; // already registered
+
+  AFRAME.registerComponent("instrument-marker", {
+    schema: {
+      instrument: { type: "string", default: "synth" }
+    },
+    init: function () {
+      this.modelGroup = null;
+      this.isMarkerFound = false;
+      this.cardId = this.data.instrument === "drum" ? "drum" : "hechengqi";
+      this.markerResource = this.data.instrument === "drum" ? drumMarkerBinding : synthMarkerBinding;
+
+      this.el.addEventListener("markerFound", () => this.onFound());
+      this.el.addEventListener("markerLost", () => this.onLost());
+    },
+    onFound: function () {
+      this.isMarkerFound = true;
+      onMarkerFound(this.cardId, this.markerResource);
+    },
+    onLost: function () {
+      this.isMarkerFound = false;
+      onMarkerLost();
+    },
+    tick: function () {
+      if (!this.isMarkerFound || !this.modelGroup) return;
+      this.el.object3D.updateMatrixWorld();
+      const m = this.el.object3D.matrixWorld;
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scl = new THREE.Vector3();
+      m.decompose(pos, quat, scl);
+
+      const modelScale = window.__arModelScale ? window.__arModelScale() : FIXED_SYNTH_SCALE;
+      this.modelGroup.matrix.compose(
+        pos,
+        quat,
+        new THREE.Vector3(modelScale, modelScale, modelScale)
+      );
+      this.modelGroup.matrixAutoUpdate = false;
+      this.modelGroup.matrixWorldNeedsUpdate = true;
+    }
+  });
+  console.log("[AR] instrument-marker component registered");
+}
+
+// Register ASAP, with retry if AFRAME hasn't loaded yet
+registerInstrumentMarkerComponent();
 
 // ============================================================
 // Marker event handlers (called from A-Frame component)
@@ -2001,14 +2013,18 @@ function updateArDebug(partial = {}) {
 // Event bindings & initialization
 // ============================================================
 function bindEvents() {
-  $("#start-ar")?.addEventListener("pointerdown", (event) => {
+  const btn = $("#start-ar");
+  console.log("[AR] bindEvents: start-ar button found:", !!btn);
+
+  btn?.addEventListener("pointerdown", (event) => {
     event.preventDefault();
+    console.log("[AR] start-ar pointerdown");
     unlockAudio();
     hideWelcome();
     startAR();
   }, { passive: false });
-  $("#start-ar")?.addEventListener("touchstart", () => unlockAudio(), { passive: true });
-  $("#start-ar")?.addEventListener("click", (event) => {
+  btn?.addEventListener("touchstart", () => unlockAudio(), { passive: true });
+  btn?.addEventListener("click", (event) => {
     event.preventDefault();
     unlockAudio();
   });
@@ -2029,27 +2045,36 @@ function bindEvents() {
 }
 
 function startAR() {
+  console.log("[AR] startAR called");
   const aframeScene = document.getElementById("ar-scene");
-  if (!aframeScene) return;
+  if (!aframeScene) {
+    console.error("[AR] a-scene element not found!");
+    return;
+  }
 
-  // Show the A-Frame scene
+  console.log("[AR] Showing a-scene...");
   aframeScene.classList.add("active");
   aframeScene.style.display = "block";
 
   setStageWaiting(false);
   setPrompt(PROMPT_FIND_CARD);
 
-  // Initialize our THREE.js integration once the scene is ready
   if (!scene) {
+    console.log("[AR] Initializing THREE.js scene...");
     createScene();
   }
 }
 
+// Expose globally so onclick attribute works as fallback
+window._startAR = startAR;
+
 function init() {
+  console.log("[AR] init: module loaded, BUILD_ID:", BUILD_ID);
+  console.log("[AR] AFRAME available:", typeof AFRAME !== "undefined");
   unregisterServiceWorkers();
   bindEvents();
   setStageWaiting(true);
-  setPrompt("请允许相机");
+  setPrompt("请点击启动");
   showWelcome();
   updateArDebug();
 }
